@@ -1,0 +1,16 @@
+parser:
+
+1. typy danych
+2. importy
+3. identyfikatory obiektow
+4. deklaracje obiektow
+
+nie przetwarzamy makr (
+    OBJECT-TYPE
+    FROM RFC-1212;
+)
+
+gridnet.org/lab1.pdf
+
+zad. 3
+SNMPv2-MIB::sysName.0: 
