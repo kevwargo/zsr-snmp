@@ -54,3 +54,6 @@ dkms.conf
 *~
 .#*
 \#*
+obj/
+demo/
+parse
