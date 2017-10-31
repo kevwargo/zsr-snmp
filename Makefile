@@ -5,9 +5,14 @@ LDFLAGS=-lpcre
 
 SOURCES=src/parse.c
 SOURCES+=src/dllist.c
+SOURCES+=src/utils.c
+SOURCES+=src/imports.c
+SOURCES+=src/main.c
 
 HEADERS=include/dllist.h
 HEADERS+=include/parse.h
+HEADERS+=include/imports.h
+HEADERS+=include/utils.h
 
 
 define SourcesToObjects =

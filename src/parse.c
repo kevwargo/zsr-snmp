@@ -7,48 +7,8 @@
 #include <pcre.h>
 #include "parse.h"
 #include "dllist.h"
+#include "utils.h"
 
-
-struct imports_file_entry {
-    char *name;
-    struct dllist *definitions;
-};
-
-struct imports {
-    enum imports_state state;
-    struct dllist *files;
-    struct imports_file_entry *current_file;
-};
-
-
-static char *read_file(char *filename)
-{
-    struct stat st;
-    int fd;
-    char *buf;
-    if (stat(filename, &st) < 0) {
-        perror("stat");
-        exit(1);
-    }
-    fd = open(filename, O_RDONLY);
-    if (fd < 0) {
-        perror("open");
-        exit(1);
-    }
-    buf = (char *)malloc(st.st_size + 1);
-    if (! buf) {
-        perror("malloc");
-        exit(1);
-    }
-    size_t size = read(fd, buf, st.st_size);
-    close(fd);
-    if (size < 0) {
-        perror("read");
-        exit(1);
-    }
-    buf[size] = '\0';
-    return buf;
-}
 
 void regexp_scan(const char *subject, struct dllist *token_specs, token_handler_t handler, void *data)
 {
@@ -107,134 +67,17 @@ void regexp_scan(const char *subject, struct dllist *token_specs, token_handler_
     }
 }
 
-static char *find_imports(char *content)
+int __attribute__((__unused__)) re_test(int argc, const char **argv)
 {
     const char *error;
     int erroffset;
-    pcre *re = pcre_compile("^[ \t]*IMPORTS[ \t\n\r]+", PCRE_MULTILINE, &error, &erroffset, NULL);
-    if (! re) {
-        fprintf(stderr, "pcre_compile error: %s\n", error);
-        exit(1);
-    }
-
-    int ovector[3];
-    int rc = pcre_exec(re, NULL, content, strlen(content), 0, 0, ovector, 3);
-    if (rc < 0) {
-        if (rc == PCRE_ERROR_NOMATCH) {
-            fprintf(stderr, "No IMPORTS found\n");
-        } else {
-            fprintf(stderr, "IMPORTS match failed with code %d\n", rc);
-        }
-        exit(1);
-    }
-    return content + ovector[1];
-}
-
-static int handle_imports_token(token, imports)
-    struct token *token;
-    struct imports *imports;
-{
-    char *definition;
-    switch (token->spec->type) {
-        case IDENTIFIER:
-            switch (imports->state) {
-                case BEFORE_DEFINITION: case AFTER_FILENAME:
-                    definition = strdup(token->match);
-                    dllist_append(imports->current_file->definitions, &definition);
-                    imports->state = AFTER_DEFINITION;
-                    break;
-                case BEFORE_FILENAME:
-                    imports->current_file->name = strdup(token->match);
-                    dllist_append(imports->files, imports->current_file);
-                    imports->current_file->name = NULL;
-                    imports->current_file->definitions = dllist_create();
-                    imports->state = AFTER_FILENAME;
-                    break;
-                default:
-                    fprintf(stderr, "Unexpected identifier %s\n", token->match);
-                    exit(1);
-            }
-            break;
-        case COMMA:
-            if (imports->state == AFTER_DEFINITION) {
-                imports->state = BEFORE_DEFINITION;
-            } else {
-                fprintf(stderr, "Unexpected token COMMA\n");
-                exit(1);
-            }
-            break;
-        case KW_FROM:
-            if (imports->state == AFTER_DEFINITION) {
-                imports->state = BEFORE_FILENAME;
-            } else {
-                fprintf(stderr, "Unexpected token KW_FROM\n");
-                exit(1);
-            }
-            break;
-        case SEMICOLON:
-            if (imports->state == AFTER_FILENAME) {
-                return 1;
-            } else {
-                fprintf(stderr, "Unexpected token SEMICOLON\n");
-                exit(1);
-            }
-            break;
-        case WHITESPACE:
-            break;
-        default:
-            fprintf(stderr, "Unexpected token type %d\n", token->spec->type);
-            exit(1);
-    }
+    pcre *re = pcre_compile(argv[1], PCRE_ANCHORED, &error, &erroffset, NULL);
+    const char *match;
+    int ovector[6];
+    printf("%d\n", pcre_exec(re, NULL, argv[2], strlen(argv[2]), atoi(argv[3]), 0, ovector, 6));
+    pcre_get_substring(argv[2], ovector, 2, 0, &match);
+    printf("match: %s\n", match);
     return 0;
 }
 
-static struct imports *parse_imports(char *filename)
-{
-    struct dllist *tokens = dllist_create();
-    struct token_spec ts;
 
-    ts.type = KW_FROM;
-    ts.re = "FROM";
-    dllist_append(tokens, &ts);
-
-    ts.type = IDENTIFIER;
-    ts.re = "[a-zA-Z0-9_-]+";
-    dllist_append(tokens, &ts);
-
-    ts.type = COMMA;
-    ts.re = ",";
-    dllist_append(tokens, &ts);
-
-    ts.type = SEMICOLON;
-    ts.re = ";";
-    dllist_append(tokens, &ts);
-
-    ts.type = WHITESPACE;
-    ts.re = "[ \t\n\r]+";
-    dllist_append(tokens, &ts);
-
-    char *content = find_imports(read_file(filename));
-
-    struct imports *imports = (struct imports *)malloc(sizeof(struct imports));
-    imports->state = BEFORE_DEFINITION;
-    imports->files = dllist_create();
-    imports->current_file = (struct imports_file_entry *)malloc(sizeof(struct imports_file_entry));
-    imports->current_file->name = NULL;
-    imports->current_file->definitions = dllist_create();
-    regexp_scan(content, tokens, handle_imports_token, imports);
-
-    return imports;
-}
-
-int main(int argc, char **argv)
-{
-    struct imports *imports = parse_imports(argv[1]);
-    struct imports_file_entry *file;
-    dllist_foreach(file, imports->files) {
-        printf("file %s:\n", file->name);
-        char **defptr;
-        dllist_foreach(defptr, file->definitions) {
-            printf("\t%s\n", *defptr);
-        }
-    }
-}
