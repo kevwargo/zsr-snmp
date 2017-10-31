@@ -2,6 +2,7 @@
 #define __IMPORTS_H_INCLUDED_
 
 #include "dllist.h"
+#include "mibtree.h"
 
 enum imports_token_type {
     IDENTIFIER,
@@ -29,6 +30,7 @@ struct imports {
     struct imports_file_entry *current_file;
 };
 
-extern struct imports *parse_imports(char *filename);
+extern struct imports *parse_imports(char *content);
+extern int import_file(char *filename, struct oid *mib);
 
 #endif

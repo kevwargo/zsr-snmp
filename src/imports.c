@@ -4,6 +4,7 @@
 #include <pcre.h>
 #include "utils.h"
 #include "parse.h"
+#include "mibtree.h"
 #include "imports.h"
 #include "dllist.h"
 
@@ -89,7 +90,7 @@ static int handle_imports_token(token, imports)
     return 0;
 }
 
-struct imports *parse_imports(char *filename)
+struct imports *parse_imports(char *content)
 {
     struct dllist *token_specs = dllist_create();
     struct token_spec ts;
@@ -99,7 +100,7 @@ struct imports *parse_imports(char *filename)
     dllist_append(token_specs, &ts);
 
     ts.type = IDENTIFIER;
-    ts.re = "[a-zA-Z0-9_-]+";
+    ts.re = "[a-zA-Z_-][a-zA-Z0-9_-]*";
     dllist_append(token_specs, &ts);
 
     ts.type = COMMA;
@@ -114,7 +115,7 @@ struct imports *parse_imports(char *filename)
     ts.re = "[ \t\n\r]+";
     dllist_append(token_specs, &ts);
 
-    char *content = find_imports(read_file(filename));
+    char *imports_section = find_imports(content);
 
     struct imports *imports = (struct imports *)malloc(sizeof(struct imports));
     imports->state = BEFORE_DEFINITION;
@@ -122,7 +123,36 @@ struct imports *parse_imports(char *filename)
     imports->current_file = (struct imports_file_entry *)malloc(sizeof(struct imports_file_entry));
     imports->current_file->name = NULL;
     imports->current_file->definitions = dllist_create();
-    regexp_scan(content, token_specs, handle_imports_token, imports);
+    regexp_scan(imports_section, token_specs, handle_imports_token, imports);
 
     return imports;
+}
+
+static int import_from_string(char *content, struct oid *mib, char *object)
+{
+    struct imports *imports = parse_imports(content);
+    struct imports_file_entry *file;
+    dllist_foreach(file, imports->files) {
+        char *filename;
+        if (asprintf(&filename, "%s.mib", file->name) < 0) {
+            perror("asprintf");
+            return -1;
+        }
+        char *file_content = read_file(filename);
+        char **defptr;
+        dllist_foreach(defptr, file->definitions) {
+            if (import_from_string(file_content, mib, *defptr) < 0) {
+                return -1;
+            }
+        }
+    }
+    if (parse_oid(content, object, mib) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int import_file(char *filename, struct oid *mib)
+{
+    return import_from_string(read_file(filename), mib, "[a-zA-Z_-][a-zA-Z0-9_-]*");
 }

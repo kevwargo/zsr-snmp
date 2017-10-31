@@ -1,11 +1,14 @@
 #include <stdio.h>
+#include <string.h>
 #include "dllist.h"
 #include "parse.h"
 #include "imports.h"
+#include "mibtree.h"
+#include "utils.h"
 
-int main(int argc,  char * const *argv)
+static void __attribute__((__unused__)) print_imports(char *filename)
 {
-    struct imports *imports = parse_imports(argv[1]);
+    struct imports *imports = parse_imports(read_file(filename));
     struct imports_file_entry *file;
     dllist_foreach(file, imports->files) {
         printf("file %s:\n", file->name);
@@ -14,4 +17,75 @@ int main(int argc,  char * const *argv)
             printf("\t%s\n", *defptr);
         }
     }
+}
+
+static void __attribute__((__unused__)) test_oid(char *filename, char *name)
+{
+    struct oid oid;
+    oid.value = 1;
+    oid.name = "iso";
+    oid.children = dllist_create();
+    oid.type = NULL;
+    if (parse_oid((const char *)read_file(filename), name, &oid) < 0) {
+        exit(1);
+    }
+    
+}
+
+static int __attribute__((__unused__)) capture_count(char *regex)
+{
+    const char *error;
+    int erroffset;
+    int groups;
+    pcre *re = pcre_compile(regex, 0, &error, &erroffset, NULL);
+    if (! re) {
+        fprintf(stderr, "pcre_compile error `%s' at %d\n", error, erroffset);
+        return -1;
+    }
+    int rc = pcre_fullinfo(re, NULL, PCRE_INFO_CAPTURECOUNT, &groups);
+    if (rc < 0) {
+        fprintf(stderr, "pcre_fullinfo error: %s\n", pcre_strerror(rc));
+        pcre_free(re);
+        return rc;
+    }
+    pcre_free(re);
+    return groups;
+}
+
+static void __attribute__((__unused__)) test_re(char *regex, char *subject, int len, int offset)
+{
+    const char *error;
+    int erroffset;
+    pcre *re = pcre_compile(regex, 0, &error, &erroffset, NULL);
+    if (! re) {
+        fprintf(stderr, "pcre_compile error `%s' at %d\n", error, erroffset);
+        exit(-1);
+    }
+    int ovecsize;
+    int rc = pcre_fullinfo(re, NULL, PCRE_INFO_CAPTURECOUNT, &ovecsize);
+    if (rc < 0) {
+        fprintf(stderr, "pcre_fullinfo error: %s\n", pcre_strerror(rc));
+        pcre_free(re);
+        exit(rc);
+    }
+    ovecsize++;
+    ovecsize *= 3;
+    int *ovector = (int *)malloc(sizeof(int) * ovecsize);
+    rc = pcre_exec(re, NULL, subject, len, offset, 0, ovector, ovecsize);
+    if (rc < 0) {
+        fprintf(stderr, "pcre_exec: %s\n", pcre_strerror(rc));
+        exit(1);
+    }
+    for (int i = 0; i < rc; i++) {
+        printf("[%d %d] ", ovector[i*2], ovector[i*2 + 1]);
+    }
+    putchar('\n');
+}
+
+int main(int argc, char **argv)
+{
+    test_oid(argv[1], argv[2]);
+    /* printf("%d\n", capture_count(argv[1])); */
+    /* test_re(argv[1], argv[2], atoi(argv[3]), atoi(argv[4])); */
+    return 0;
 }

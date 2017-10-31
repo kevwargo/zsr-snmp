@@ -21,6 +21,7 @@ struct token {
 
 typedef int (*token_handler_t)(struct token *tok, void *data);
 
+extern char *pcre_strerror(int code);
 extern void regexp_scan(const char *subject, struct dllist *token_specs, token_handler_t handler, void *data);
 
 #endif
