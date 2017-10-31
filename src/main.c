@@ -82,10 +82,24 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     putchar('\n');
 }
 
+static void __attribute__((__unused__)) test_import(char *filename)
+{
+    struct oid mib;
+    mib.value = 1;
+    mib.name = "iso";
+    mib.children = dllist_create();
+    mib.type = NULL;
+    if (import_file(filename, &mib) < 0) {
+        fprintf(stderr, "FILE IMPORT ERROR: %s\n", filename);
+        exit(1);
+    }
+}
+
 int main(int argc, char **argv)
 {
-    test_oid(argv[1], argv[2]);
+    /* test_oid(argv[1], argv[2]); */
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3]), atoi(argv[4])); */
+    test_import(argv[1]);
     return 0;
 }

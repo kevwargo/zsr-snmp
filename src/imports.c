@@ -24,6 +24,7 @@ static char *find_imports(char *content)
     if (rc < 0) {
         if (rc == PCRE_ERROR_NOMATCH) {
             fprintf(stderr, "No IMPORTS found\n");
+            return NULL;
         } else {
             fprintf(stderr, "IMPORTS match failed with code %d\n", rc);
         }
@@ -116,6 +117,9 @@ struct imports *parse_imports(char *content)
     dllist_append(token_specs, &ts);
 
     char *imports_section = find_imports(content);
+    if (! imports_section) {
+        return NULL;
+    }
 
     struct imports *imports = (struct imports *)malloc(sizeof(struct imports));
     imports->state = BEFORE_DEFINITION;
@@ -131,18 +135,20 @@ struct imports *parse_imports(char *content)
 static int import_from_string(char *content, struct oid *mib, char *object)
 {
     struct imports *imports = parse_imports(content);
-    struct imports_file_entry *file;
-    dllist_foreach(file, imports->files) {
-        char *filename;
-        if (asprintf(&filename, "%s.mib", file->name) < 0) {
-            perror("asprintf");
-            return -1;
-        }
-        char *file_content = read_file(filename);
-        char **defptr;
-        dllist_foreach(defptr, file->definitions) {
-            if (import_from_string(file_content, mib, *defptr) < 0) {
+    if (imports) {
+        struct imports_file_entry *file;
+        dllist_foreach(file, imports->files) {
+            char *filename;
+            if (asprintf(&filename, "%s.mib", file->name) < 0) {
+                perror("asprintf");
                 return -1;
+            }
+            char *file_content = read_file(filename);
+            char **defptr;
+            dllist_foreach(defptr, file->definitions) {
+                if (import_from_string(file_content, mib, *defptr) < 0) {
+                    return -1;
+                }
             }
         }
     }
