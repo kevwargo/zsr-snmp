@@ -5,9 +5,23 @@
 #include "mibtree.h"
 #include "parse.h"
 
-static int fill_mib(struct oid *target, const char *name, const char *all, const char *last)
+static int fill_mib(struct oid *target, char *name, char *oids, const char *content)
 {
-    printf("name: %s, all: %s, last: %s\n", name, all, last);
+    char *s = oids;
+    char *e = s;
+    do {
+        oids = s;
+        while (*e != ' ' && *e != '\t' && *e != '\n' && *e != '\r' && *e != '\0') {
+            e++;
+        }
+        s = e;
+        while (*e == ' ' || *e == '\t' || *e == '\n' || *e == '\r') {
+            *e++ = '\0';
+        }
+        if (parse_oids(content, oids, target) < 0) {
+            return -1;
+        }
+    } while (e > s);
     return 0;
 }
 
@@ -51,7 +65,7 @@ int parse_oid(const char *content, char *name, struct oid *target)
     ovecsize++;
     ovecsize *= 3;
     ovector = (int *)malloc(sizeof(int) * ovecsize);
-    printf("ovecsize: %d\n", ovecsize);
+    /* printf("ovecsize: %d\n", ovecsize); */
 
     int len = strlen(content);
     int offset = 0;
@@ -70,33 +84,24 @@ int parse_oid(const char *content, char *name, struct oid *target)
         matched = 1;
         offset = ovector[1];
 
-        const char *objname;
-        const char *all;
-        const char *last;
-        rc = pcre_get_substring(content, ovector, capture, 1, &objname);
+        char *objname;
+        char *oids;
+        rc = pcre_get_substring(content, ovector, capture, 1, (const char **)&objname);
         if (rc < 0) {
             fprintf(stderr, "pcre_get_substring %d error: %s\n", 1, pcre_strerror(rc));
             return rc;
         }
-        rc = pcre_get_substring(content, ovector, capture, 2, &all);
+        rc = pcre_get_substring(content, ovector, capture, 2, (const char **)&oids);
         if (rc < 0) {
             pcre_free_substring(objname);
             fprintf(stderr, "pcre_get_substring %d error: %s\n", 2, pcre_strerror(rc));
             return rc;
         }
-        rc = pcre_get_substring(content, ovector, capture, 4, &last);
-        if (rc < 0) {
-            pcre_free_substring(objname);
-            pcre_free_substring(all);
-            fprintf(stderr, "pcre_get_substring %d error: %s\n", 4, pcre_strerror(rc));
-            return rc;
-        }
 
-        rc = fill_mib(target, objname, all, last);
+        rc = fill_mib(target, objname, oids, content);
 
         pcre_free_substring(objname);
-        pcre_free_substring(all);
-        pcre_free_substring(last);
+        pcre_free_substring(oids);
         if (rc < 0) {
             return rc;
         }

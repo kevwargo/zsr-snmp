@@ -23,7 +23,7 @@ static char *find_imports(char *content)
     int rc = pcre_exec(re, NULL, content, strlen(content), 0, 0, ovector, 3);
     if (rc < 0) {
         if (rc == PCRE_ERROR_NOMATCH) {
-            fprintf(stderr, "No IMPORTS found\n");
+            /* fprintf(stderr, "No IMPORTS found\n"); */
             return NULL;
         } else {
             fprintf(stderr, "IMPORTS match failed with code %d\n", rc);
@@ -139,10 +139,11 @@ static int import_from_string(char *content, struct oid *mib, char *object)
         struct imports_file_entry *file;
         dllist_foreach(file, imports->files) {
             char *filename;
-            if (asprintf(&filename, "%s.mib", file->name) < 0) {
+            if (asprintf(&filename, "%s.txt", file->name) < 0) {
                 perror("asprintf");
                 return -1;
             }
+            printf("IMPORT INTERNAL %s\n", filename);
             char *file_content = read_file(filename);
             char **defptr;
             dllist_foreach(defptr, file->definitions) {
@@ -160,5 +161,6 @@ static int import_from_string(char *content, struct oid *mib, char *object)
 
 int import_file(char *filename, struct oid *mib)
 {
+    printf("IMPORT %s\n", filename);
     return import_from_string(read_file(filename), mib, "[a-zA-Z_-][a-zA-Z0-9_-]*");
 }
