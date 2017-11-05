@@ -5,18 +5,13 @@
 #include "mibtree.h"
 
 enum imports_token_type {
-    IDENTIFIER,
-    COMMA,
-    KW_FROM,
-    SEMICOLON,
-    WHITESPACE
+    IDENTIFIER = 0,
+    IDENTIFIER_WITH_FILENAME,
+    SEMICOLON
 };
 
 enum imports_state {
-    BEFORE_DEFINITION,
-    AFTER_DEFINITION,
-    BEFORE_FILENAME,
-    AFTER_FILENAME
+    STATE_IMPORTS_MAIN = 0
 };
 
 struct imports_file_entry {
@@ -25,12 +20,12 @@ struct imports_file_entry {
 };
 
 struct imports {
-    enum imports_state state;
     struct dllist *files;
     struct imports_file_entry *current_file;
 };
 
-extern struct imports *parse_imports(char *content);
+extern struct imports *parse_imports(char *content, char **errorptr);
+extern void free_imports(struct imports *imports);
 extern int import_file(char *filename, struct oid *mib);
 
 #endif

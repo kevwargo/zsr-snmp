@@ -8,15 +8,21 @@
 
 static void __attribute__((__unused__)) print_imports(char *filename)
 {
-    struct imports *imports = parse_imports(read_file(filename));
-    struct imports_file_entry *file;
-    dllist_foreach(file, imports->files) {
-        printf("file %s:\n", file->name);
+    char *error;
+    struct imports *imports = parse_imports(read_file(filename), &error);
+    if (! imports) {
+        fprintf(stderr, "Import parse error: %s\n", error);
+        exit(1);
+    }
+    struct imports_file_entry **fileptr;
+    dllist_foreach(fileptr, imports->files) {
+        printf("file %s:\n", (*fileptr)->name);
         char **defptr;
-        dllist_foreach(defptr, file->definitions) {
+        dllist_foreach(defptr, (*fileptr)->definitions) {
             printf("\t%s\n", *defptr);
         }
     }
+    free_imports(imports);
 }
 
 static void __attribute__((__unused__)) test_oid(char *filename, char *name)
@@ -52,7 +58,7 @@ static int __attribute__((__unused__)) capture_count(char *regex)
     return groups;
 }
 
-static void __attribute__((__unused__)) test_re(char *regex, char *subject, int len, int offset)
+static void __attribute__((__unused__)) test_re(char *regex, char *subject, int offset)
 {
     const char *error;
     int erroffset;
@@ -71,7 +77,7 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     ovecsize++;
     ovecsize *= 3;
     int *ovector = (int *)malloc(sizeof(int) * ovecsize);
-    rc = pcre_exec(re, NULL, subject, len, offset, 0, ovector, ovecsize);
+    rc = pcre_exec(re, NULL, subject, strlen(subject), offset, PCRE_ANCHORED, ovector, ovecsize);
     if (rc < 0) {
         fprintf(stderr, "pcre_exec: %s\n", pcre_strerror(rc));
         exit(1);
@@ -99,7 +105,8 @@ int main(int argc, char **argv)
 {
     /* test_oid(argv[1], argv[2]); */
     /* printf("%d\n", capture_count(argv[1])); */
-    /* test_re(argv[1], argv[2], atoi(argv[3]), atoi(argv[4])); */
-    test_import(argv[1]);
+    /* test_re(argv[1], argv[2], atoi(argv[3])); */
+    /* test_import(argv[1]); */
+    print_imports(argv[1]);
     return 0;
 }

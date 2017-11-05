@@ -5,10 +5,14 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pcre.h>
+
 #include "parse.h"
 #include "dllist.h"
 #include "utils.h"
 
+#define ERRBUF_SIZE 1024
+
+static char regex_errbuf[ERRBUF_SIZE];
 
 char *pcre_strerror(int code)
 {
@@ -106,60 +110,203 @@ char *pcre_strerror(int code)
     }
 }
 
-void regexp_scan(const char *subject, struct dllist *token_specs, token_handler_t handler, void *data)
-{
-    int token_count = token_specs->size;
-    struct token *tokens = (struct token *)malloc(sizeof(struct token) * token_count);
-    int i = 0;
-    struct token_spec *ts;
-    dllist_foreach(ts, token_specs) {
-        const char *error;
-        int erroffset;
-        tokens[i].spec = ts;
-        tokens[i].re = pcre_compile(ts->re, PCRE_ANCHORED, &error, &erroffset, NULL);
-        if (! tokens[i].re) {
-            fprintf(stderr, "pcre_compile error: %s\n", error);
-            exit(1);
-        }
-        int rc = pcre_fullinfo(tokens[i].re, NULL, PCRE_INFO_CAPTURECOUNT, &tokens[i].ovecsize);
-        if (rc < 0) {
-            fprintf(stderr, "pcre_fullinfo error code: %d\n", rc);
-            exit(1);
-        }
-        tokens[i].ovecsize++;
-        tokens[i].ovecsize *= 3;
-        tokens[i].ovector = (int *)malloc(sizeof(int) * tokens[i].ovecsize);
-        i++;
-    }
 
-    int len = strlen(subject);
+struct regex *regex_prepare(char *pattern, char **errorptr)
+{
+    struct regex *regex = (struct regex *)malloc(sizeof(struct regex));
+    char *error;
+    int erroffset;
+    pcre *re = pcre_compile(pattern, PCRE_MULTILINE, (const char **)&error, &erroffset, NULL);
+    if (! re) {
+        snprintf(regex_errbuf, ERRBUF_SIZE, "pcre_compile error: `%s' at %d", error, erroffset);
+        *errorptr = regex_errbuf;
+        return NULL;
+    }
+    pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED, (const char **)&error);
+    if (! extra) {
+        pcre_free(re);
+        snprintf(regex_errbuf, ERRBUF_SIZE, "pcre_study error: `%s'", error);
+        *errorptr = regex_errbuf;
+        return NULL;
+    }
+    int capture_count;
+    int rc = pcre_fullinfo(re, extra, PCRE_INFO_CAPTURECOUNT, &capture_count);
+    if (rc < 0) {
+        pcre_free_study(extra);
+        pcre_free(re);
+        *errorptr = pcre_strerror(rc);
+        return NULL;
+    }
+    regex->re = re;
+    regex->extra = extra;
+    regex->ovecsize = (capture_count + 1) * 3;
+    regex->ovector = (int *)malloc(sizeof(int) * regex->ovecsize);
+    return regex;
+}
+
+void regex_free(struct regex *regex)
+{
+    pcre_free_study(regex->extra);
+    pcre_free(regex->re);
+    free(regex->ovector);
+    free(regex);
+}
+
+int regex_match(struct regex *regex, char *subject, int length, int startoffset, int options, char **errorptr)
+{
+    int rc = pcre_exec(regex->re, regex->extra, subject, length, startoffset, options, regex->ovector, regex->ovecsize);
+    if (rc < 0) {
+        *errorptr = pcre_strerror(rc);
+    }
+    return rc;
+}
+
+char *regex_get_match(struct token *token, int group, char **errorptr)
+{
+    char *result;
+    int rc = pcre_get_substring(token->subject, token->regex->ovector, token->regex->ovecsize / 3, group, (const char **)&result);
+    if (rc < 0) {
+        *errorptr = pcre_strerror(rc);
+        return NULL;
+    }
+    return result;
+}
+
+static struct token *prepare_tokens(struct parser *parser, char *subject, char **tokens_re, char **errorptr)
+{
+    struct token *tokens = (struct token *)calloc(parser->token_count, sizeof(struct token));
+    for (int i = 0; i < parser->token_count; i++) {
+        tokens[i].pattern = tokens_re[i];
+        tokens[i].subject = subject;
+        tokens[i].regex = regex_prepare(tokens_re[i], errorptr);
+        if (! tokens[i].regex) {
+            for (int j = 0; j < i; j++) {
+                regex_free(tokens[j].regex);
+            }
+            free(tokens);
+            return NULL;
+        }
+    }
+    return tokens;
+}
+
+static void free_tokens(struct token *tokens, int token_count)
+{
+    for (int i = 0; i < token_count; i++) {
+        regex_free(tokens[i].regex);
+    }
+    free(tokens);
+}
+
+static int match_start_token(struct parser *parser, char *subject, int len, int *posptr, void *data, char **errorptr)
+{
+    struct token start_token;
+    start_token.pattern = parser->start_pattern;
+    start_token.subject = subject;
+    start_token.regex = regex_prepare(parser->start_pattern, errorptr);
+    if (! start_token.regex) {
+        return REGEX_PARSE_ERROR;
+    }
+    int rc = regex_match(start_token.regex, subject, len, *posptr, 0, errorptr);
+    if (rc < 0) {
+        regex_free(start_token.regex);
+        return REGEX_PARSE_START_TOKEN_NOT_FOUND_ERROR;
+    }
+    if (parser->start_token_handler) {
+        rc = parser->start_token_handler(&start_token, -1, &parser->state, data, errorptr);
+        if (rc < 0) {
+            regex_free(start_token.regex);
+            return REGEX_PARSE_ERROR;
+        } else if (rc > 0) {
+            regex_free(start_token.regex);
+            return 1;
+        }
+    }
+    *posptr = start_token.regex->ovector[1];
+    regex_free(start_token.regex);
+    return 0;
+}
+
+int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *data, char **errorptr)
+{
     int pos = 0;
+    int len = strlen(subject);
+    /* printf("pos = %d\n", pos); */
+    int rc = match_start_token(parser, subject, len, &pos, data, errorptr);
+    /* printf("pos after = %d\n", pos); */
+    if (rc < 0) {
+        return rc;
+    }
+    if (rc > 0) {
+        return 0;
+    }
+    struct token *tokens = prepare_tokens(parser, subject, tokens_re, errorptr);
+    if (! tokens) {
+        return REGEX_PARSE_ERROR;
+    }
     int finished = 0;
     while (! finished) {
         int matched = 0;
-        for (int i = 0; i < token_count && !matched; i++) {
-            int rc = pcre_exec(tokens[i].re, NULL, subject + pos, len, 0, 0, tokens[i].ovector, tokens[i].ovecsize);
+        for (int i = 0; i < parser->token_count && !matched; i++) {
+            /* int limit = 20; */
+            /* printf("matching %s at %*.*s\n", tokens[i].pattern, limit, limit, subject + pos); */
+            char *error;
+            rc = regex_match(tokens[i].regex, subject, len, pos, PCRE_ANCHORED, &error);
             if (rc == PCRE_ERROR_NOMATCH) {
+                /* printf("no match\n"); */
                 continue;
             }
             if (rc < 0) {
-                fprintf(stderr, "pcre_exec error code: %d\n", rc);
-                exit(1);
+                *errorptr = error;
+                return rc;
             }
             matched = 1;
-            tokens[i].subject = subject + pos;
-            pcre_get_substring(subject + pos, tokens[i].ovector, rc, 0, &tokens[i].match);
-            if (handler(&tokens[i], data)) {
+            /* printf("matched\n"); */
+            token_handler_t handler = parser->handlers[i][parser->state];
+            rc = handler(&tokens[i], i, &parser->state, data, errorptr);
+            if (rc < 0) {
+                free_tokens(tokens, parser->token_count);
+                return rc;
+            } else if (rc > 0) {
                 finished = 1;
             }
-            pcre_free_substring(tokens[i].match);
-            pos += tokens[i].ovector[1];
-            len -= tokens[i].ovector[1];
+            pos = tokens[i].regex->ovector[1];
         }
         if (! matched) {
-            fprintf(stderr, "None of the provided tokens were found\n");
-            exit(1);
+            free_tokens(tokens, parser->token_count);
+            *errorptr = "Unexpected end of file during parsing";
+            return REGEX_PARSE_ERROR;
         }
     }
+    free_tokens(tokens, parser->token_count);
+    return 0;
 }
 
+static int unexpected_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+{
+    char *match = regex_get_match(token, 0, errorptr);
+    if (! match) {
+        return REGEX_PARSE_UNEXPECTED_TOKEN_GET_ERROR;
+    }
+    snprintf(regex_errbuf, ERRBUF_SIZE, "Unexpected token `%s' for state %d", match, *stateptr);
+    pcre_free_substring(match);
+    *errorptr = regex_errbuf;
+    return REGEX_PARSE_UNEXPECTED_TOKEN_ERROR;
+}
+
+int ignore_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+{
+    return 0;
+}
+
+token_handler_t **init_handlers(int token_count, int state_count)
+{
+    token_handler_t **handlers = (token_handler_t **)malloc(token_count * sizeof(token_handler_t *));
+    for (int i = 0; i < token_count; i++) {
+        handlers[i] = (token_handler_t *)malloc(state_count * sizeof(token_handler_t));
+        for (int j = 0; j < state_count; j++) {
+            handlers[i][j] = unexpected_token_handler;
+        }
+    }
+    return handlers;
+}

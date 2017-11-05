@@ -9,19 +9,18 @@ static int fill_mib(struct oid *target, char *name, char *oids, const char *cont
 {
     char *s = oids;
     char *e = s;
-    do {
-        oids = s;
+    printf("OIDS: %s\n", oids);
+    while (*s) {
         while (*e != ' ' && *e != '\t' && *e != '\n' && *e != '\r' && *e != '\0') {
             e++;
         }
-        s = e;
         while (*e == ' ' || *e == '\t' || *e == '\n' || *e == '\r') {
             *e++ = '\0';
         }
-        if (parse_oids(content, oids, target) < 0) {
-            return -1;
-        }
-    } while (e > s);
+        printf("'%s' ", s);
+        s = e;
+    }
+    putchar('\n');
     return 0;
 }
 
@@ -41,7 +40,7 @@ int parse_oid(const char *content, char *name, struct oid *target)
             "[ \\t\\n\\r]",
             "[ \\t\\n\\r]",
             "[a-zA-Z_-][a-zA-Z0-9_-]*",
-            "([ \\t\\n\\r]+([a-zA-Z_-][a-zA-Z0-9_-]*|[0-9]+))+",
+            "([ \\t\\n\\r]+([a-zA-Z_-][a-zA-Z0-9_-]*(\\([0-9]\\))?|[0-9]+))+",
             "[ \\t\\n\\r]"
         );
     if (rc < 0) {

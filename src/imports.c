@@ -8,133 +8,128 @@
 #include "imports.h"
 #include "dllist.h"
 
-
-static char *find_imports(char *content)
+static int handle_symbol(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
 {
-    const char *error;
-    int erroffset;
-    pcre *re = pcre_compile("^[ \t]*IMPORTS[ \t\n\r]+", PCRE_MULTILINE, &error, &erroffset, NULL);
-    if (! re) {
-        fprintf(stderr, "pcre_compile error: %s\n", error);
-        exit(1);
+    struct imports *imports = (struct imports *)data;
+    if (! imports->current_file->definitions) {
+        imports->current_file->definitions = dllist_create();
     }
-
-    int ovector[3];
-    int rc = pcre_exec(re, NULL, content, strlen(content), 0, 0, ovector, 3);
-    if (rc < 0) {
-        if (rc == PCRE_ERROR_NOMATCH) {
-            /* fprintf(stderr, "No IMPORTS found\n"); */
-            return NULL;
-        } else {
-            fprintf(stderr, "IMPORTS match failed with code %d\n", rc);
-        }
-        exit(1);
+    char *definition = regex_get_match(token, 1, errorptr);
+    if (! definition) {
+        return -1;
     }
-    return content + ovector[1];
+    /* printf("definition '%s'\n", definition); */
+    dllist_append(imports->current_file->definitions, &definition);
+    return 0;
 }
 
-static int handle_imports_token(token, imports)
-    struct token *token;
-    struct imports *imports;
+static int handle_filename(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
 {
-    char *definition;
-    switch (token->spec->type) {
-        case IDENTIFIER:
-            switch (imports->state) {
-                case BEFORE_DEFINITION: case AFTER_FILENAME:
-                    definition = strdup(token->match);
-                    dllist_append(imports->current_file->definitions, &definition);
-                    imports->state = AFTER_DEFINITION;
-                    break;
-                case BEFORE_FILENAME:
-                    imports->current_file->name = strdup(token->match);
-                    dllist_append(imports->files, imports->current_file);
-                    imports->current_file->name = NULL;
-                    imports->current_file->definitions = dllist_create();
-                    imports->state = AFTER_FILENAME;
-                    break;
-                default:
-                    fprintf(stderr, "Unexpected identifier %s\n", token->match);
-                    exit(1);
-            }
-            break;
-        case COMMA:
-            if (imports->state == AFTER_DEFINITION) {
-                imports->state = BEFORE_DEFINITION;
-            } else {
-                fprintf(stderr, "Unexpected token COMMA\n");
-                exit(1);
-            }
-            break;
-        case KW_FROM:
-            if (imports->state == AFTER_DEFINITION) {
-                imports->state = BEFORE_FILENAME;
-            } else {
-                fprintf(stderr, "Unexpected token KW_FROM\n");
-                exit(1);
-            }
-            break;
-        case SEMICOLON:
-            if (imports->state == AFTER_FILENAME) {
-                return 1;
-            } else {
-                fprintf(stderr, "Unexpected token SEMICOLON\n");
-                exit(1);
-            }
-            break;
-        case WHITESPACE:
-            break;
-        default:
-            fprintf(stderr, "Unexpected token type %d\n", token->spec->type);
-            exit(1);
+    struct imports *imports = (struct imports *)data;
+    if (! imports->current_file->definitions) {
+        imports->current_file->definitions = dllist_create();
+    }
+    char *definition = regex_get_match(token, 1, errorptr);
+    if (! definition) {
+        return -1;
+    }
+    char *filename = regex_get_match(token, 2, errorptr);
+    if (! filename) {
+        pcre_free_substring(definition);
+        return -1;
+    }
+    char *endptr = regex_get_match(token, 3, errorptr);
+    if (! endptr) {
+        pcre_free_substring(definition);
+        pcre_free_substring(filename);
+        return -1;
+    }
+    /* printf("last def '%s', file '%s'\n", definition, filename); */
+    dllist_append(imports->current_file->definitions, &definition);
+    imports->current_file->name = filename;
+    dllist_append(imports->files, &imports->current_file);
+    imports->current_file = (struct imports_file_entry *)calloc(1, sizeof(struct imports_file_entry));
+    char end = *endptr;
+    pcre_free_substring(endptr);
+    if (end == ';') {
+        return 1;
     }
     return 0;
 }
 
-struct imports *parse_imports(char *content)
+static int handle_semicolon(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
 {
-    struct dllist *token_specs = dllist_create();
-    struct token_spec ts;
+    return 1;
+}
 
-    ts.type = KW_FROM;
-    ts.re = "FROM";
-    dllist_append(token_specs, &ts);
+struct imports *parse_imports(char *content, char **errorptr)
+{
+    int token_count = 3;
+    int state_count = 1;
 
-    ts.type = IDENTIFIER;
-    ts.re = "[a-zA-Z_-][a-zA-Z0-9_-]*";
-    dllist_append(token_specs, &ts);
+    char **tokens = (char **)malloc(token_count * sizeof(char *));
+    tokens[IDENTIFIER] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*,";
+    tokens[IDENTIFIER_WITH_FILENAME] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*FROM[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)([ \\t\\n\\r;])";
+    tokens[SEMICOLON] = "[ \\t\\n\\r]*;";
 
-    ts.type = COMMA;
-    ts.re = ",";
-    dllist_append(token_specs, &ts);
+    token_handler_t **handlers = init_handlers(token_count, state_count);
+    handlers[IDENTIFIER][STATE_IMPORTS_MAIN] = handle_symbol;
+    handlers[IDENTIFIER_WITH_FILENAME][STATE_IMPORTS_MAIN] = handle_filename;
+    handlers[SEMICOLON][STATE_IMPORTS_MAIN] = handle_semicolon;
 
-    ts.type = SEMICOLON;
-    ts.re = ";";
-    dllist_append(token_specs, &ts);
-
-    ts.type = WHITESPACE;
-    ts.re = "[ \t\n\r]+";
-    dllist_append(token_specs, &ts);
-
-    char *imports_section = find_imports(content);
-    if (! imports_section) {
-        return NULL;
-    }
+    struct parser parser;
+    parser.start_pattern = "^\\s*IMPORTS\\s";
+    parser.start_token_handler = NULL;
+    parser.state = STATE_IMPORTS_MAIN;
+    parser.token_count = token_count;
+    parser.state_count = state_count;
+    parser.handlers = handlers;
 
     struct imports *imports = (struct imports *)malloc(sizeof(struct imports));
-    imports->state = BEFORE_DEFINITION;
     imports->files = dllist_create();
-    imports->current_file = (struct imports_file_entry *)malloc(sizeof(struct imports_file_entry));
-    imports->current_file->name = NULL;
-    imports->current_file->definitions = dllist_create();
-    regexp_scan(imports_section, token_specs, handle_imports_token, imports);
-
+    imports->current_file = (struct imports_file_entry *)calloc(1, sizeof(struct imports_file_entry));
+    
+    if (regex_parse(&parser, content, tokens, imports, errorptr) < 0) {
+        free_imports(imports);
+        return NULL;
+    }
     return imports;
+}
+
+void free_imports(struct imports *imports)
+{
+    if (imports->files) {
+        struct imports_file_entry **fileptr;
+        dllist_foreach(fileptr, imports->files) {
+            pcre_free_substring((*fileptr)->name);
+            if ((*fileptr)->definitions) {
+                char **defptr;
+                dllist_foreach(defptr, (*fileptr)->definitions) {
+                    pcre_free_substring(*defptr);
+                }
+                dllist_destroy((*fileptr)->definitions);
+            }
+        }
+        dllist_destroy(imports->files);
+    }
+    if (imports->current_file) {
+        if (imports->current_file->name) {
+            pcre_free_substring(imports->current_file->name);
+        }
+        if (imports->current_file->definitions) {
+            char **defptr;
+            dllist_foreach(defptr, imports->current_file->definitions) {
+                pcre_free_substring(*defptr);
+            }
+            dllist_destroy(imports->current_file->definitions);
+        }
+    }
+    free(imports);
 }
 
 static int import_from_string(char *content, struct oid *mib, char *object)
 {
-    struct imports *imports = parse_imports(content);
+    struct imports *imports = NULL;
     if (imports) {
         struct imports_file_entry *file;
         dllist_foreach(file, imports->files) {
