@@ -14,7 +14,7 @@ static int handle_symbol(struct token *token, int token_num, int *stateptr, void
     if (! imports->current_file->definitions) {
         imports->current_file->definitions = dllist_create();
     }
-    char *definition = regex_get_match(token, 1, errorptr);
+    char *definition = regex_get_match(token->regex, token->subject, 1, errorptr);
     if (! definition) {
         return -1;
     }
@@ -29,16 +29,16 @@ static int handle_filename(struct token *token, int token_num, int *stateptr, vo
     if (! imports->current_file->definitions) {
         imports->current_file->definitions = dllist_create();
     }
-    char *definition = regex_get_match(token, 1, errorptr);
+    char *definition = regex_get_match(token->regex, token->subject, 1, errorptr);
     if (! definition) {
         return -1;
     }
-    char *filename = regex_get_match(token, 2, errorptr);
+    char *filename = regex_get_match(token->regex, token->subject, 2, errorptr);
     if (! filename) {
         pcre_free_substring(definition);
         return -1;
     }
-    char *endptr = regex_get_match(token, 3, errorptr);
+    char *endptr = regex_get_match(token->regex, token->subject, 3, errorptr);
     if (! endptr) {
         pcre_free_substring(definition);
         pcre_free_substring(filename);

@@ -35,6 +35,6 @@ struct oid {
     struct object_type *type;
 };
 
-extern int parse_oid(const char *content, char *name, struct oid *target);
+extern int parse_oid(char *name, char *content, struct oid *mib);
 
 #endif

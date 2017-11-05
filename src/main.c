@@ -9,7 +9,9 @@
 static void __attribute__((__unused__)) print_imports(char *filename)
 {
     char *error;
-    struct imports *imports = parse_imports(read_file(filename), &error);
+    char *content = read_file(filename);
+    char *subject = remove_comments(content);
+    struct imports *imports = parse_imports(subject, &error);
     if (! imports) {
         fprintf(stderr, "Import parse error: %s\n", error);
         exit(1);
@@ -23,6 +25,8 @@ static void __attribute__((__unused__)) print_imports(char *filename)
         }
     }
     free_imports(imports);
+    free(subject);
+    free(content);
 }
 
 static void __attribute__((__unused__)) test_oid(char *filename, char *name)
@@ -32,7 +36,7 @@ static void __attribute__((__unused__)) test_oid(char *filename, char *name)
     oid.name = "iso";
     oid.children = dllist_create();
     oid.type = NULL;
-    if (parse_oid((const char *)read_file(filename), name, &oid) < 0) {
+    if (parse_oid(read_file(filename), name, &oid) < 0) {
         exit(1);
     }
     
@@ -77,13 +81,16 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     ovecsize++;
     ovecsize *= 3;
     int *ovector = (int *)malloc(sizeof(int) * ovecsize);
-    rc = pcre_exec(re, NULL, subject, strlen(subject), offset, PCRE_ANCHORED, ovector, ovecsize);
+    rc = pcre_exec(re, NULL, subject, strlen(subject), offset, 0, ovector, ovecsize);
     if (rc < 0) {
         fprintf(stderr, "pcre_exec: %s\n", pcre_strerror(rc));
         exit(1);
     }
     for (int i = 0; i < rc; i++) {
-        printf("[%d %d] ", ovector[i*2], ovector[i*2 + 1]);
+        char *s;
+        pcre_get_substring(subject, ovector, rc, i, (const char **)&s);
+        printf("[%d %d]: %s\n", ovector[i*2], ovector[i*2 + 1], s);
+        pcre_free_substring(s);
     }
     putchar('\n');
 }
@@ -107,6 +114,7 @@ int main(int argc, char **argv)
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3])); */
     /* test_import(argv[1]); */
-    print_imports(argv[1]);
+    /* print_imports(argv[1]); */
+    puts(remove_comments(read_file(argv[1])));
     return 0;
 }

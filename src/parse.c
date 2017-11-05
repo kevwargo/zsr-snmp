@@ -161,10 +161,10 @@ int regex_match(struct regex *regex, char *subject, int length, int startoffset,
     return rc;
 }
 
-char *regex_get_match(struct token *token, int group, char **errorptr)
+char *regex_get_match(struct regex *regex, char *subject, int group, char **errorptr)
 {
     char *result;
-    int rc = pcre_get_substring(token->subject, token->regex->ovector, token->regex->ovecsize / 3, group, (const char **)&result);
+    int rc = pcre_get_substring(subject, regex->ovector, regex->ovecsize / 3, group, (const char **)&result);
     if (rc < 0) {
         *errorptr = pcre_strerror(rc);
         return NULL;
@@ -246,11 +246,11 @@ int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *da
     }
     int finished = 0;
     while (! finished) {
+        char *error;
         int matched = 0;
         for (int i = 0; i < parser->token_count && !matched; i++) {
             /* int limit = 20; */
             /* printf("matching %s at %*.*s\n", tokens[i].pattern, limit, limit, subject + pos); */
-            char *error;
             rc = regex_match(tokens[i].regex, subject, len, pos, PCRE_ANCHORED, &error);
             if (rc == PCRE_ERROR_NOMATCH) {
                 /* printf("no match\n"); */
@@ -284,7 +284,7 @@ int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *da
 
 static int unexpected_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
 {
-    char *match = regex_get_match(token, 0, errorptr);
+    char *match = regex_get_match(token->regex, token->subject, 0, errorptr);
     if (! match) {
         return REGEX_PARSE_UNEXPECTED_TOKEN_GET_ERROR;
     }
@@ -309,4 +309,55 @@ token_handler_t **init_handlers(int token_count, int state_count)
         }
     }
     return handlers;
+}
+
+char *remove_comments(char *subject)
+{
+    char *error;
+    struct regex *comment = regex_prepare("(^|[^\"a-zA-Z0-9_-])(--.*?(--|$))", &error);
+    if (! comment) {
+        fprintf(stderr, "Comment regex prepare: %s\n", error);
+        return NULL;
+    }
+    struct regex *string = regex_prepare("\"[^\"]*\"", &error);
+    if (! string) {
+        fprintf(stderr, "String regex prepare: %s\n", error);
+        return NULL;
+    }
+    int len = strlen(subject);
+    int pos = 0;
+    int finished = 0;
+    char *result = strdup(subject);
+    while (! finished) {
+        int rc = regex_match(comment, result + pos, len - pos, 0, 0, &error);
+        if (rc == PCRE_ERROR_NOMATCH) {
+            finished = 1;
+        } else if (rc < 0) {
+            fprintf(stderr, "Comment regex match: %s\n", error);
+            free(result);
+            return NULL;
+        } else {
+            rc = regex_match(string, result, len, pos, 0, &error);
+            if (rc < 0 && rc != PCRE_ERROR_NOMATCH) {
+                fprintf(stderr, "String regex match: %s\n", error);
+                free(result);
+                return NULL;
+            }
+            if (rc > 0) {
+                comment->ovector[0] += pos;
+                comment->ovector[1] += pos;
+                comment->ovector[4] += pos;
+                comment->ovector[5] += pos;
+                if (string->ovector[0] < comment->ovector[0]) {
+                    pos = string->ovector[1];
+                    continue;
+                }
+            }
+            for (int i = comment->ovector[4]; i < comment->ovector[5]; i++) {
+                result[i] = ' ';
+            }
+            pos = comment->ovector[1];
+        }        
+    }
+    return result;
 }

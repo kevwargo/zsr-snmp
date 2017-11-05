@@ -40,12 +40,13 @@ extern struct regex *regex_prepare(char *pattern, char **errorptr);
 extern void regex_free(struct regex *regex);
 
 extern int regex_match(struct regex *regex, char *subject, int length, int startoffset, int options, char **errorptr);
-extern char *regex_get_match(struct token *token, int group, char **errorptr);
+extern char *regex_get_match(struct regex *regex, char *subject, int group, char **errorptr);
 
 extern token_handler_t **init_handlers(int token_count, int state_count);
 extern int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *data, char **errorptr);
 
 extern int ignore_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr);
 
+extern char *remove_comments(char *subject);
 
 #endif
