@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <pcre.h>
 
-#include "parse.h"
+#include "regex.h"
 #include "dllist.h"
 #include "utils.h"
 

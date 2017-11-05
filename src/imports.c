@@ -3,7 +3,7 @@
 #include <string.h>
 #include <pcre.h>
 #include "utils.h"
-#include "parse.h"
+#include "regex.h"
 #include "mibtree.h"
 #include "imports.h"
 #include "dllist.h"

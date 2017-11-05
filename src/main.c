@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "dllist.h"
-#include "parse.h"
+#include "regex.h"
 #include "imports.h"
 #include "mibtree.h"
 #include "utils.h"

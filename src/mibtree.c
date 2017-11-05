@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <pcre.h>
 #include "mibtree.h"
-#include "parse.h"
+#include "regex.h"
 
 int parse_oid(char *name, char *content, struct oid *mib)
 {
