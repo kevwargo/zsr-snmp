@@ -35,21 +35,21 @@ static void __attribute__((__unused__)) print_groups(struct token *token)
     }
 }
 
-static int handle_object_identifier(struct token *token, int token_num, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static int handle_object_identifier(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
 {
     DEFINE_NAMED_GROUP(name);
     printf("objId %s\n", name);
     return 0;
 }
 
-static int handle_object_type(struct token *token, int token_num, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static int handle_object_type(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
 {
     DEFINE_NAMED_GROUP(name);
     printf("objType %s\n", name);
     return 0;
 }
 
-static int handle_type(struct token *token, int token_num, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static int handle_type(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
 {
     DEFINE_NAMED_GROUP(name);
     DEFINE_NAMED_GROUP(parType);
@@ -63,7 +63,7 @@ static int handle_type(struct token *token, int token_num, int *stateptr, struct
     return 1;
 }
 
-static int handle_symbol_def(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_symbol_def(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     /* print_groups(token); */
     /* return 1; */
@@ -72,11 +72,11 @@ static int handle_symbol_def(struct token *token, int token_num, int *stateptr, 
     DEFINE_NAMED_GROUP(objType);
     struct mibtree *mibtree = (struct mibtree *)data;
     if (*objId) {
-        return handle_object_identifier(token, token_num, stateptr, mibtree, errorptr);
+        return handle_object_identifier(token, stateptr, mibtree, errorptr);
     } else if (*objType) {
-        return handle_object_type(token, token_num, stateptr, mibtree, errorptr);
+        return handle_object_type(token, stateptr, mibtree, errorptr);
     } else {
-        return handle_type(token, token_num, stateptr, mibtree, errorptr);
+        return handle_type(token, stateptr, mibtree, errorptr);
     }
 }
 
@@ -142,19 +142,19 @@ static char *build_type_regex(int subtype)
         );
 }
 
-static int handle_type_init(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_type_init(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     *stateptr = STATE_MIB_TYPE_PART;
     return 0;
 }
 
-static int handle_type_part(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_type_part(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     char *name = regex_get_match(token->regex, token->subject, 1, errorptr);
     char *type_src = regex_get_match(token->regex, token->subject, 2, errorptr);
     char *type = normalize_type(type_src);
     pcre_free_substring(type_src);
-    if (token_num == TOKEN_MIB_TYPE_PART) {
+    if (strcmp(token->name, "TYPE_PART") == 0) {
         printf("mib type part: '%s' '%s'\n", name, type);
     } else {
         printf("mib type last part: '%s' '%s'\n", name, type);
@@ -163,35 +163,34 @@ static int handle_type_part(struct token *token, int token_num, int *stateptr, v
     return 0;
 }
 
-static int handle_type_end(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_type_end(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     return 1;
 }
 
-static int handle_oids_init(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_oids_init(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     *stateptr = STATE_MIB_OIDS_NEXT;
     return 0;
 }
 
-static int handle_oids_next(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_oids_next(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     DEFINE_NAMED_GROUP(oid);
     DEFINE_NAMED_GROUP(oidval);
     DEFINE_NAMED_GROUP(val);
-    printf("oid '%s' oidval '%s' val '%s'\n", oid, oidval, val);
     if (*val) {
         *stateptr = STATE_MIB_OIDS_END;
-        printf("oid last value: %s\n", val);
+        printf("oid value: '%s'\n", val);
     } else if (*oidval) {
-        printf("oid %s with val %s\n", oid, oidval);
+        printf("oid '%s(%s)'\n", oid, oidval);
     } else {
-        printf("oid %s\n", oid);
+        printf("oid '%s'\n", oid);
     }
     return 0;
 }
 
-static int handle_oids_end(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_oids_end(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     return 1;
 }
@@ -232,29 +231,47 @@ int parse_symbol(char *name, char *content)
     parser.start_token_handler = handle_symbol_def;
 
     parser.state = STATE_MIB_OIDS_INIT;
-    parser.token_count = MIB_TOKEN_COUNT;
     parser.state_count = MIB_STATE_COUNT;
-    
-    char **tokens = (char **)xmalloc(MIB_TOKEN_COUNT * sizeof(char *));
-    tokens[TOKEN_MIB_BRACE_OPEN] = SPACE "*" "{";
-    tokens[TOKEN_MIB_BRACE_CLOSE] = SPACE "*" "}";
-    tokens[TOKEN_MIB_TYPE_PART] = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")" SPACE "*" ",";
-    tokens[TOKEN_MIB_TYPE_PART_LAST] = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")";
+    parser.states = init_states(MIB_STATE_COUNT);
 
-    tokens[TOKEN_MIB_OID] = SPACE "*" "((?<oid>[a-zA-Z_][a-zA-Z0-9_-]*)(" SPACE "*" "\\(" SPACE "*" "(?<oidval>[0-9]+)" SPACE "*" "\\))?|(?<val>[0-9]+))";
+    struct token token;
+    token.pattern = SPACE "*" "{";
+    token.handler = handle_type_init;
+    token.name = "BRACE_OPEN";
+    dllist_append(parser.states[STATE_MIB_TYPE_INIT], &token);
 
-    parser.handlers = init_handlers(MIB_TOKEN_COUNT, MIB_STATE_COUNT);
-    parser.handlers[TOKEN_MIB_BRACE_OPEN][STATE_MIB_TYPE_INIT] = handle_type_init;
-    parser.handlers[TOKEN_MIB_TYPE_PART][STATE_MIB_TYPE_PART] = handle_type_part;
-    parser.handlers[TOKEN_MIB_TYPE_PART_LAST][STATE_MIB_TYPE_PART] = handle_type_part;
-    parser.handlers[TOKEN_MIB_BRACE_CLOSE][STATE_MIB_TYPE_END] = handle_type_end;
+    token.pattern = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")" SPACE "*" ",";
+    token.handler = handle_type_part;
+    token.name = "TYPE_PART";
+    dllist_append(parser.states[STATE_MIB_TYPE_PART], &token);
 
-    parser.handlers[TOKEN_MIB_BRACE_OPEN][STATE_MIB_OIDS_INIT] = handle_oids_init;
-    parser.handlers[TOKEN_MIB_OID][STATE_MIB_OIDS_NEXT] = handle_oids_next;
-    parser.handlers[TOKEN_MIB_BRACE_CLOSE][STATE_MIB_OIDS_END] = handle_oids_end;
+    token.pattern = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")";
+    token.handler = handle_type_part;
+    token.name = "TYPE_PART_LAST";
+    dllist_append(parser.states[STATE_MIB_TYPE_PART], &token);
+
+    token.pattern = SPACE "*" "}";
+    token.handler = handle_type_end;
+    token.name = "BRACE_CLOSE";
+    dllist_append(parser.states[STATE_MIB_TYPE_END], &token);
+
+    token.pattern = SPACE "*" "{";
+    token.handler = handle_oids_init;
+    token.name = "BRACE_OPEN";
+    dllist_append(parser.states[STATE_MIB_OIDS_INIT], &token);
+
+    token.pattern = SPACE "*" "((?<oid>[a-zA-Z_][a-zA-Z0-9_-]*)(" SPACE "*" "\\(" SPACE "*" "(?<oidval>[0-9]+)" SPACE "*" "\\))?|(?<val>[0-9]+))";
+    token.handler = handle_oids_next;
+    token.name = "OID_NEXT";
+    dllist_append(parser.states[STATE_MIB_OIDS_NEXT], &token);
+
+    token.pattern = SPACE "*" "}";
+    token.handler = handle_oids_end;
+    token.name = "BRACE_CLOSE";
+    dllist_append(parser.states[STATE_MIB_OIDS_END], &token);
 
     char *error;
-    if (regex_parse(&parser, content, tokens, NULL, &error) < 0) {
+    if (regex_parse(&parser, content, NULL, &error) < 0) {
         fprintf(stderr, "Parse object %s failed: %s\n", name, error);
         return -1;
     }

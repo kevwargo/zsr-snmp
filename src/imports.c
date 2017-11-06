@@ -8,7 +8,7 @@
 #include "imports.h"
 #include "dllist.h"
 
-static int handle_symbol(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_symbol(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     struct imports *imports = (struct imports *)data;
     if (! imports->current_file->definitions) {
@@ -23,7 +23,7 @@ static int handle_symbol(struct token *token, int token_num, int *stateptr, void
     return 0;
 }
 
-static int handle_filename(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_filename(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     struct imports *imports = (struct imports *)data;
     if (! imports->current_file->definitions) {
@@ -57,39 +57,39 @@ static int handle_filename(struct token *token, int token_num, int *stateptr, vo
     return 0;
 }
 
-static int handle_semicolon(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+static int handle_semicolon(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     return 1;
 }
 
 struct imports *parse_imports(char *content, char **errorptr)
 {
-    int token_count = 3;
     int state_count = 1;
-
-    char **tokens = (char **)xmalloc(token_count * sizeof(char *));
-    tokens[IDENTIFIER] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*,";
-    tokens[IDENTIFIER_WITH_FILENAME] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*FROM[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)([ \\t\\n\\r;])";
-    tokens[SEMICOLON] = "[ \\t\\n\\r]*;";
-
-    token_handler_t **handlers = init_handlers(token_count, state_count);
-    handlers[IDENTIFIER][STATE_IMPORTS_MAIN] = handle_symbol;
-    handlers[IDENTIFIER_WITH_FILENAME][STATE_IMPORTS_MAIN] = handle_filename;
-    handlers[SEMICOLON][STATE_IMPORTS_MAIN] = handle_semicolon;
 
     struct parser parser;
     parser.start_pattern = "^\\s*IMPORTS\\s";
     parser.start_token_handler = NULL;
     parser.state = STATE_IMPORTS_MAIN;
-    parser.token_count = token_count;
     parser.state_count = state_count;
-    parser.handlers = handlers;
+    parser.states = init_states(state_count);
+
+    struct token token;
+    token.pattern = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*,";
+    token.handler = handle_symbol;
+    dllist_append(parser.states[STATE_IMPORTS_MAIN], &token);
+    token.pattern = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*FROM[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)([ \\t\\n\\r;])";
+    token.handler = handle_filename;
+    dllist_append(parser.states[STATE_IMPORTS_MAIN], &token);
+    token.pattern = "[ \\t\\n\\r]*;";
+    token.handler = handle_semicolon;
+    dllist_append(parser.states[STATE_IMPORTS_MAIN], &token);
 
     struct imports *imports = (struct imports *)xmalloc(sizeof(struct imports));
     imports->files = dllist_create();
     imports->current_file = (struct imports_file_entry *)xcalloc(1, sizeof(struct imports_file_entry));
-    
-    if (regex_parse(&parser, content, tokens, imports, errorptr) < 0) {
+
+    int rc = regex_parse(&parser, content, imports, errorptr);
+    if (rc < 0 && rc != REGEX_PARSE_START_TOKEN_NOT_FOUND_ERROR) {
         free_imports(imports);
         return NULL;
     }

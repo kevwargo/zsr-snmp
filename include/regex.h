@@ -25,36 +25,39 @@ struct regex {
     struct named *named;
 };
 
+
+struct token;
+
+typedef int (*token_handler_t)(struct token *token, int *stateptr, void *data, char **errorptr);
+
 struct token {
     char *pattern;
     char *subject;
+    char *name;
     struct regex *regex;
+    token_handler_t handler;
 };
-
-typedef int (*token_handler_t)(struct token *token, int token_num, int *stateptr, void *data, char **errorptr);
 
 struct parser {
     char *start_pattern;
     token_handler_t start_token_handler;
     int state;
-    int token_count;
     int state_count;
-    token_handler_t **handlers;
+    struct dllist **states;
 };
 
 extern char *pcre_strerror(int code);
 
 extern struct regex *regex_prepare(char *pattern, char **errorptr);
-extern void regex_free(struct regex *regex);
-
 extern int regex_match(struct regex *regex, char *subject, int length, int startoffset, int options, char **errorptr);
 extern char *regex_get_match(struct regex *regex, char *subject, int group, char **errorptr);
 extern char *regex_get_named_match(struct regex *regex, char *subject, char *groupname, char **errorptr);
+extern void regex_free(struct regex *regex);
 
-extern token_handler_t **init_handlers(int token_count, int state_count);
-extern int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *data, char **errorptr);
+extern struct dllist **init_states(int count);
+extern int regex_parse(struct parser *parser, char *subject, void *data, char **errorptr);
 
-extern int ignore_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr);
+extern int ignore_token_handler(struct token *token, int *stateptr, void *data, char **errorptr);
 
 extern char *remove_comments(char *subject);
 

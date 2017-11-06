@@ -223,30 +223,41 @@ char *regex_get_named_match(struct regex *regex, char *subject, char *groupname,
     return result;
 }
 
-static struct token *prepare_tokens(struct parser *parser, char *subject, char **tokens_re, char **errorptr)
+static int prepare_tokens(struct parser *parser, char *subject, char **errorptr)
 {
-    struct token *tokens = (struct token *)xcalloc(parser->token_count, sizeof(struct token));
-    for (int i = 0; i < parser->token_count; i++) {
-        tokens[i].pattern = tokens_re[i];
-        tokens[i].subject = subject;
-        tokens[i].regex = regex_prepare(tokens_re[i], errorptr);
-        if (! tokens[i].regex) {
-            for (int j = 0; j < i; j++) {
-                regex_free(tokens[j].regex);
+    for (int i = 0; i < parser->state_count; i++) {
+        struct token *token;
+        dllist_foreach(token, parser->states[i]) {
+            token->regex = regex_prepare(token->pattern, errorptr);
+            if (! token->regex) {
+                struct token *t;
+                dllist_foreach(t, parser->states[i]) {
+                    if (t == token) {
+                        break;
+                    }
+                    regex_free(t->regex);
+                }
+                for (int j = 0; j < i; j++) {
+                    dllist_foreach(t, parser->states[j]) {
+                        regex_free(t->regex);
+                    }
+                }
+                return -1;
             }
-            free(tokens);
-            return NULL;
+            token->subject = subject;
         }
     }
-    return tokens;
+    return 0;
 }
 
-static void free_tokens(struct token *tokens, int token_count)
+static void free_tokens(struct parser *parser)
 {
-    for (int i = 0; i < token_count; i++) {
-        regex_free(tokens[i].regex);
+    for (int i = 0; i < parser->state_count; i++) {
+        struct token *token;
+        dllist_foreach(token, parser->states[i]) {
+            regex_free(token->regex);
+        }
     }
-    free(tokens);
 }
 
 static int match_start_token(struct parser *parser, char *subject, int len, int *posptr, void *data, char **errorptr)
@@ -264,7 +275,7 @@ static int match_start_token(struct parser *parser, char *subject, int len, int 
         return REGEX_PARSE_START_TOKEN_NOT_FOUND_ERROR;
     }
     if (parser->start_token_handler) {
-        rc = parser->start_token_handler(&start_token, -1, &parser->state, data, errorptr);
+        rc = parser->start_token_handler(&start_token, &parser->state, data, errorptr);
         if (rc < 0) {
             regex_free(start_token.regex);
             return REGEX_PARSE_ERROR;
@@ -278,7 +289,7 @@ static int match_start_token(struct parser *parser, char *subject, int len, int 
     return 0;
 }
 
-int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *data, char **errorptr)
+int regex_parse(struct parser *parser, char *subject, void *data, char **errorptr)
 {
     int pos = 0;
     int len = strlen(subject);
@@ -291,18 +302,16 @@ int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *da
     if (rc > 0) {
         return 0;
     }
-    struct token *tokens = prepare_tokens(parser, subject, tokens_re, errorptr);
-    if (! tokens) {
+    if (prepare_tokens(parser, subject, errorptr) < 0) {
         return REGEX_PARSE_ERROR;
     }
     int finished = 0;
     while (! finished) {
         char *error;
         int matched = 0;
-        for (int i = 0; i < parser->token_count && !matched; i++) {
-            /* int limit = 20; */
-            /* printf("matching %s at %*.*s\n", tokens[i].pattern, limit, limit, subject + pos); */
-            rc = regex_match(tokens[i].regex, subject, len, pos, PCRE_ANCHORED, &error);
+        struct token *token;
+        dllist_foreach(token, parser->states[parser->state]) {
+            rc = regex_match(token->regex, subject, len, pos, PCRE_ANCHORED, &error);
             if (rc == PCRE_ERROR_NOMATCH) {
                 /* printf("no match\n"); */
                 continue;
@@ -313,53 +322,39 @@ int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *da
             }
             matched = 1;
             /* printf("matched\n"); */
-            token_handler_t handler = parser->handlers[i][parser->state];
-            rc = handler(&tokens[i], i, &parser->state, data, errorptr);
+            rc = token->handler(token, &parser->state, data, errorptr);
             if (rc < 0) {
-                free_tokens(tokens, parser->token_count);
+                free_tokens(parser);
                 return rc;
             } else if (rc > 0) {
                 finished = 1;
             }
-            pos = tokens[i].regex->ovector[1];
+            pos = token->regex->ovector[1];
         }
         if (! matched) {
-            free_tokens(tokens, parser->token_count);
-            *errorptr = "Unexpected end of file during parsing";
+            free_tokens(parser);
+            static char err[64];
+            snprintf(err, 64, "Syntax error at %d", pos);
+            *errorptr = err;
             return REGEX_PARSE_ERROR;
         }
     }
-    free_tokens(tokens, parser->token_count);
+    free_tokens(parser);
     return 0;
 }
 
-static int unexpected_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
-{
-    char *match = regex_get_match(token->regex, token->subject, 0, errorptr);
-    if (! match) {
-        return REGEX_PARSE_UNEXPECTED_TOKEN_GET_ERROR;
-    }
-    snprintf(regex_errbuf, ERRBUF_SIZE, "Unexpected token %d `%s' for state %d", token_num, match, *stateptr);
-    pcre_free_substring(match);
-    *errorptr = regex_errbuf;
-    return REGEX_PARSE_UNEXPECTED_TOKEN_ERROR;
-}
-
-int ignore_token_handler(struct token *token, int token_num, int *stateptr, void *data, char **errorptr)
+int ignore_token_handler(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     return 0;
 }
 
-token_handler_t **init_handlers(int token_count, int state_count)
+struct dllist **init_states(int count)
 {
-    token_handler_t **handlers = (token_handler_t **)xmalloc(token_count * sizeof(token_handler_t *));
-    for (int i = 0; i < token_count; i++) {
-        handlers[i] = (token_handler_t *)xmalloc(state_count * sizeof(token_handler_t));
-        for (int j = 0; j < state_count; j++) {
-            handlers[i][j] = unexpected_token_handler;
-        }
+    struct dllist **states = (struct dllist **)xmalloc(count * sizeof(struct dllist *));
+    for (int i = 0; i < count; i++) {
+        states[i] = dllist_create();
     }
-    return handlers;
+    return states;
 }
 
 char *remove_comments(char *subject)
@@ -379,7 +374,8 @@ char *remove_comments(char *subject)
     int pos = 0;
     int finished = 0;
     char *result = xstrdup(subject);
-    while (! finished) {
+    int count = 0;
+    while (! finished && count++ < 2000) {
         int rc = regex_match(comment, result + pos, len - pos, 0, 0, &error);
         if (rc == PCRE_ERROR_NOMATCH) {
             finished = 1;
@@ -388,17 +384,16 @@ char *remove_comments(char *subject)
             free(result);
             return NULL;
         } else {
+            comment->ovector[0] += pos;
+            comment->ovector[1] += pos;
+            comment->ovector[4] += pos;
+            comment->ovector[5] += pos;
             rc = regex_match(string, result, len, pos, 0, &error);
             if (rc < 0 && rc != PCRE_ERROR_NOMATCH) {
                 fprintf(stderr, "String regex match: %s\n", error);
                 free(result);
                 return NULL;
-            }
-            if (rc > 0) {
-                comment->ovector[0] += pos;
-                comment->ovector[1] += pos;
-                comment->ovector[4] += pos;
-                comment->ovector[5] += pos;
+            } else if (rc > 0) {
                 if (string->ovector[0] < comment->ovector[0]) {
                     pos = string->ovector[1];
                     continue;
@@ -408,7 +403,7 @@ char *remove_comments(char *subject)
                 result[i] = ' ';
             }
             pos = comment->ovector[1];
-        }        
+        }
     }
     return result;
 }
