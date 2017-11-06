@@ -1,5 +1,5 @@
-#ifndef __PARSE_H_INCLUDED
-#define __PARSE_H_INCLUDED
+#ifndef __REGEX_H_INCLUDED
+#define __REGEX_H_INCLUDED
 
 #include <pcre.h>
 #include "dllist.h"

@@ -116,7 +116,7 @@ struct regex *regex_prepare(char *pattern, char **errorptr)
     struct regex *regex = (struct regex *)malloc(sizeof(struct regex));
     char *error;
     int erroffset;
-    pcre *re = pcre_compile(pattern, PCRE_MULTILINE, (const char **)&error, &erroffset, NULL);
+    pcre *re = pcre_compile(pattern, PCRE_MULTILINE | PCRE_DOTALL, (const char **)&error, &erroffset, NULL);
     if (! re) {
         snprintf(regex_errbuf, ERRBUF_SIZE, "pcre_compile error: `%s' at %d", error, erroffset);
         *errorptr = regex_errbuf;

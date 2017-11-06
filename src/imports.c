@@ -148,9 +148,9 @@ static int import_from_string(char *content, struct oid *mib, char *object)
             }
         }
     }
-    if (parse_oid(content, object, mib) < 0) {
-        return -1;
-    }
+    /* if (parse_oid(content, object, mib) < 0) { */
+    /*     return -1; */
+    /* } */
     return 0;
 }
 

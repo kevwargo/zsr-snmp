@@ -35,6 +35,11 @@ struct oid {
     struct object_type *type;
 };
 
-extern int parse_oid(char *name, char *content, struct oid *mib);
+struct mibtree {
+    struct oid *root_oid;
+    struct dllist *types;
+};
+
+extern int parse_symbol(char *name, char *content);
 
 #endif
