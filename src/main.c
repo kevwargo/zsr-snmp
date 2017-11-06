@@ -80,7 +80,7 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     }
     ovecsize++;
     ovecsize *= 3;
-    int *ovector = (int *)malloc(sizeof(int) * ovecsize);
+    int *ovector = (int *)xmalloc(sizeof(int) * ovecsize);
     rc = pcre_exec(re, NULL, subject, strlen(subject), offset, 0, ovector, ovecsize);
     if (rc < 0) {
         fprintf(stderr, "pcre_exec: %s\n", pcre_strerror(rc));
@@ -109,18 +109,33 @@ static void __attribute__((__unused__)) test_import(char *filename)
     }
 }
 
-static void __attribute__((__unused__)) test_mibtree(char *name, char *filename)
+static void __attribute__((__unused__)) test_mibtree(char *filename, char *name)
 {
     if (parse_symbol(name, remove_comments(read_file(filename))) < 0) {
         exit(1);
     }
 }
 
+static void __attribute__((__unused__)) test_regex(char *pattern)
+{
+    char *error;
+    struct regex *regex = regex_prepare(pattern, &error);
+    if (! regex) {
+        fprintf(stderr, "regex_prepare failed: %s\n", error);
+        exit(1);
+    }
+    for (int i = 0; i < regex->named_count; i++) {
+        printf("%d: %s\n", regex->named[i].num, regex->named[i].name);
+    }
+}
+
+
 int main(int argc, char **argv)
 {
     /* test_oid(argv[1], argv[2]); */
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3])); */
+    /* test_regex(argv[1]); */
     /* test_import(argv[1]); */
     /* print_imports(argv[1]); */
     /* puts(remove_comments(read_file(argv[1]))); */

@@ -113,12 +113,13 @@ char *pcre_strerror(int code)
 
 struct regex *regex_prepare(char *pattern, char **errorptr)
 {
-    struct regex *regex = (struct regex *)malloc(sizeof(struct regex));
+    struct regex *regex = (struct regex *)xmalloc(sizeof(struct regex));
     char *error;
     int erroffset;
     pcre *re = pcre_compile(pattern, PCRE_MULTILINE | PCRE_DOTALL, (const char **)&error, &erroffset, NULL);
     if (! re) {
         snprintf(regex_errbuf, ERRBUF_SIZE, "pcre_compile error: `%s' at %d", error, erroffset);
+        fprintf(stderr, "%s\n", pattern);
         *errorptr = regex_errbuf;
         return NULL;
     }
@@ -137,10 +138,43 @@ struct regex *regex_prepare(char *pattern, char **errorptr)
         *errorptr = pcre_strerror(rc);
         return NULL;
     }
+
+    int name_count;
+    int name_entry_size;
+    char *name_table;
+    rc = pcre_fullinfo(re, extra, PCRE_INFO_NAMECOUNT, &name_count);
+    if (rc < 0) {
+        pcre_free_study(extra);
+        pcre_free(re);
+        *errorptr = pcre_strerror(rc);
+        return NULL;
+    }
+    rc = pcre_fullinfo(re, extra, PCRE_INFO_NAMEENTRYSIZE, &name_entry_size);
+    if (rc < 0) {
+        pcre_free_study(extra);
+        pcre_free(re);
+        *errorptr = pcre_strerror(rc);
+        return NULL;
+    }
+    rc = pcre_fullinfo(re, extra, PCRE_INFO_NAMETABLE, &name_table);
+    if (rc < 0) {
+        pcre_free_study(extra);
+        pcre_free(re);
+        *errorptr = pcre_strerror(rc);
+        return NULL;
+    }
+    regex->named_count = name_count;
+    regex->named = (struct named *)xmalloc(name_count * sizeof(struct named));
+    for (int i = 0; i < name_count; i++) {
+        char *current_entry = name_table + i*name_entry_size;
+        regex->named[i].num = (current_entry[0] << 8) | (current_entry[1]);
+        regex->named[i].name = xstrdup(current_entry + 2);
+    }
+
     regex->re = re;
     regex->extra = extra;
     regex->ovecsize = (capture_count + 1) * 3;
-    regex->ovector = (int *)malloc(sizeof(int) * regex->ovecsize);
+    regex->ovector = (int *)xmalloc(sizeof(int) * regex->ovecsize);
     return regex;
 }
 
@@ -149,6 +183,10 @@ void regex_free(struct regex *regex)
     pcre_free_study(regex->extra);
     pcre_free(regex->re);
     free(regex->ovector);
+    for (int i = 0; i < regex->named_count; i++) {
+        free(regex->named[i].name);
+    }
+    free(regex->named);
     free(regex);
 }
 
@@ -172,9 +210,22 @@ char *regex_get_match(struct regex *regex, char *subject, int group, char **erro
     return result;
 }
 
+char *regex_get_named_match(struct regex *regex, char *subject, char *groupname, char **errorptr)
+{
+    static char error[1024];
+    char *result;
+    int rc = pcre_get_named_substring(regex->re, subject, regex->ovector, regex->ovecsize / 3, groupname, (const char **)&result);
+    if (rc < 0) {
+        snprintf(error, 1024, "pcre_get_named_substring `%s' failed: %s", groupname, pcre_strerror(rc));
+        *errorptr = error;
+        return NULL;
+    }
+    return result;
+}
+
 static struct token *prepare_tokens(struct parser *parser, char *subject, char **tokens_re, char **errorptr)
 {
-    struct token *tokens = (struct token *)calloc(parser->token_count, sizeof(struct token));
+    struct token *tokens = (struct token *)xcalloc(parser->token_count, sizeof(struct token));
     for (int i = 0; i < parser->token_count; i++) {
         tokens[i].pattern = tokens_re[i];
         tokens[i].subject = subject;
@@ -288,7 +339,7 @@ static int unexpected_token_handler(struct token *token, int token_num, int *sta
     if (! match) {
         return REGEX_PARSE_UNEXPECTED_TOKEN_GET_ERROR;
     }
-    snprintf(regex_errbuf, ERRBUF_SIZE, "Unexpected token `%s' for state %d", match, *stateptr);
+    snprintf(regex_errbuf, ERRBUF_SIZE, "Unexpected token %d `%s' for state %d", token_num, match, *stateptr);
     pcre_free_substring(match);
     *errorptr = regex_errbuf;
     return REGEX_PARSE_UNEXPECTED_TOKEN_ERROR;
@@ -301,9 +352,9 @@ int ignore_token_handler(struct token *token, int token_num, int *stateptr, void
 
 token_handler_t **init_handlers(int token_count, int state_count)
 {
-    token_handler_t **handlers = (token_handler_t **)malloc(token_count * sizeof(token_handler_t *));
+    token_handler_t **handlers = (token_handler_t **)xmalloc(token_count * sizeof(token_handler_t *));
     for (int i = 0; i < token_count; i++) {
-        handlers[i] = (token_handler_t *)malloc(state_count * sizeof(token_handler_t));
+        handlers[i] = (token_handler_t *)xmalloc(state_count * sizeof(token_handler_t));
         for (int j = 0; j < state_count; j++) {
             handlers[i][j] = unexpected_token_handler;
         }
@@ -327,7 +378,7 @@ char *remove_comments(char *subject)
     int len = strlen(subject);
     int pos = 0;
     int finished = 0;
-    char *result = strdup(subject);
+    char *result = xstrdup(subject);
     while (! finished) {
         int rc = regex_match(comment, result + pos, len - pos, 0, 0, &error);
         if (rc == PCRE_ERROR_NOMATCH) {

@@ -9,12 +9,20 @@
 #define REGEX_PARSE_UNEXPECTED_TOKEN_GET_ERROR -202
 #define REGEX_PARSE_START_TOKEN_NOT_FOUND_ERROR -203
 
+#define SPACE "[ \\t\\n\\r]"
+
+struct named {
+    char *name;
+    int num;
+};
 
 struct regex {
     pcre *re;
     pcre_extra *extra;
     int *ovector;
     int ovecsize;
+    int named_count;
+    struct named *named;
 };
 
 struct token {
@@ -41,6 +49,7 @@ extern void regex_free(struct regex *regex);
 
 extern int regex_match(struct regex *regex, char *subject, int length, int startoffset, int options, char **errorptr);
 extern char *regex_get_match(struct regex *regex, char *subject, int group, char **errorptr);
+extern char *regex_get_named_match(struct regex *regex, char *subject, char *groupname, char **errorptr);
 
 extern token_handler_t **init_handlers(int token_count, int state_count);
 extern int regex_parse(struct parser *parser, char *subject, char **tokens_re, void *data, char **errorptr);

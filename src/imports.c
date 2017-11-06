@@ -48,7 +48,7 @@ static int handle_filename(struct token *token, int token_num, int *stateptr, vo
     dllist_append(imports->current_file->definitions, &definition);
     imports->current_file->name = filename;
     dllist_append(imports->files, &imports->current_file);
-    imports->current_file = (struct imports_file_entry *)calloc(1, sizeof(struct imports_file_entry));
+    imports->current_file = (struct imports_file_entry *)xcalloc(1, sizeof(struct imports_file_entry));
     char end = *endptr;
     pcre_free_substring(endptr);
     if (end == ';') {
@@ -67,7 +67,7 @@ struct imports *parse_imports(char *content, char **errorptr)
     int token_count = 3;
     int state_count = 1;
 
-    char **tokens = (char **)malloc(token_count * sizeof(char *));
+    char **tokens = (char **)xmalloc(token_count * sizeof(char *));
     tokens[IDENTIFIER] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*,";
     tokens[IDENTIFIER_WITH_FILENAME] = "[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \\t\\n\\r]*FROM[ \\t\\n\\r]*([a-zA-Z_][a-zA-Z0-9_-]*)([ \\t\\n\\r;])";
     tokens[SEMICOLON] = "[ \\t\\n\\r]*;";
@@ -85,9 +85,9 @@ struct imports *parse_imports(char *content, char **errorptr)
     parser.state_count = state_count;
     parser.handlers = handlers;
 
-    struct imports *imports = (struct imports *)malloc(sizeof(struct imports));
+    struct imports *imports = (struct imports *)xmalloc(sizeof(struct imports));
     imports->files = dllist_create();
-    imports->current_file = (struct imports_file_entry *)calloc(1, sizeof(struct imports_file_entry));
+    imports->current_file = (struct imports_file_entry *)xcalloc(1, sizeof(struct imports_file_entry));
     
     if (regex_parse(&parser, content, tokens, imports, errorptr) < 0) {
         free_imports(imports);

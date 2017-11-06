@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-c -g -O2 -Wall -std=gnu99 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -Iinclude
+CFLAGS=-g -O2 -Wall -std=gnu99 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -Iinclude
 LD=gcc
 LDFLAGS=-lpcre
 
@@ -23,22 +23,26 @@ endef
 
 define DefineRule =
 $(call SourcesToObjects, $(1)): $(1) Makefile $(HEADERS)
-	$$(CC) $$(CFLAGS) $$< -o $$@
+	$$(CC) -E $$(CFLAGS) $$< -o $(addprefix preprocessed/, $(notdir $(1)))
+	$$(CC) -c $$(CFLAGS) $$< -o $$@
 endef
 
 
 .PHONY: clean
 .PHONY: all
 
-all: obj parse
+all: obj preprocessed parse
 
 obj:
 	mkdir -p obj
 
+preprocessed:
+	mkdir -p preprocessed
+
 parse: $(call SourcesToObjects, $(SOURCES))
 	$(LD) $(LDFLAGS) -o $@ $^
 clean:
-	rm -rf obj parse
+	rm -rf obj parse preprocessed
 
 $(foreach src, $(SOURCES), $(eval $(call DefineRule, $(src))))
 

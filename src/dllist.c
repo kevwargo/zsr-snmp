@@ -2,22 +2,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include "dllist.h"
+#include "utils.h"
 
 
 struct dllist *dllist_create()
 {
-    struct dllist *list = (struct dllist *)malloc(sizeof(struct dllist));
-    if (! list) {
-        perror("create dllist");
-        exit(1);
-    }
+    struct dllist *list = (struct dllist *)xmalloc(sizeof(struct dllist));
     memset(list, 0, sizeof(struct dllist));
     return list;
 }
 
 void *dllist_new(struct dllist *list, void *item, size_t size, int prepend)
 {
-    struct dll_entry *new = malloc(size + sizeof(struct dll_entry));
+    struct dll_entry *new = xmalloc(size + sizeof(struct dll_entry));
     if (item) {
         memcpy((void *)new->item, item, size);
     }

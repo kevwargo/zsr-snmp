@@ -40,6 +40,27 @@ struct mibtree {
     struct dllist *types;
 };
 
+enum {
+    STATE_MIB_OIDS_INIT = 0,
+    STATE_MIB_OIDS_NEXT,
+    STATE_MIB_OIDS_END,
+    STATE_MIB_TYPE_INIT,
+    STATE_MIB_TYPE_PART,
+    STATE_MIB_TYPE_END,
+
+    MIB_STATE_COUNT
+};
+
+enum {
+    TOKEN_MIB_BRACE_OPEN = 0,
+    TOKEN_MIB_BRACE_CLOSE,
+    TOKEN_MIB_TYPE_PART,
+    TOKEN_MIB_TYPE_PART_LAST,
+    TOKEN_MIB_OID,
+
+    MIB_TOKEN_COUNT
+};
+
 extern int parse_symbol(char *name, char *content);
 
 #endif
