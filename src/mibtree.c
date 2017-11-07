@@ -31,6 +31,7 @@ struct mib_parser_data {
 static char mib_error_buf[MIB_ERROR_BUFSIZE];
 
 static char *normalize_type(char *type);
+static struct object_type_syntax *find_type(char *name, struct dllist *types);
 
 static void __attribute__((__unused__)) print_groups(struct token *token)
 {
@@ -51,28 +52,6 @@ static int handle_object_identifier(struct token *token, int *stateptr, struct m
     /* DEFINE_NAMED_GROUP(name); */
     /* printf("objId %s\n", name); */
     return 0;
-}
-
-static int handle_object_type(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
-{
-    /* DEFINE_NAMED_GROUP(name); */
-    /* DEFINE_NAMED_GROUP(type); */
-    /* DEFINE_NAMED_GROUP(syntaxJunk); */
-    /* printf("objType %s\n", name); */
-    mib_parser_data->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
-    
-    return 0;
-}
-
-static struct object_type_syntax *find_type(char *name, struct dllist *types)
-{
-    struct object_type_syntax *type;
-    dllist_foreach(type, types) {
-        if (strcmp(type->name, name) == 0) {
-            return type;
-        }
-    }
-    return NULL;
 }
 
 static int process_type(
@@ -143,6 +122,101 @@ static int process_type(
     return 0;
 }
 
+static int handle_object_type(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
+{
+    /* ("typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh") */
+    DEFINE_NAMED_GROUP(name);
+    DEFINE_NAMED_GROUP(typeSeqOf);
+    DEFINE_NAMED_GROUP(type);
+    DEFINE_NAMED_GROUP(typeSizeLow);
+    DEFINE_NAMED_GROUP(typeSizeHigh);
+    DEFINE_NAMED_GROUP(typeRangeLow);
+    DEFINE_NAMED_GROUP(typeRangeHigh);
+
+    if (*typeSizeLow) {
+        printf("Object %s OCTET STRING SIZE restrictions: %s", name, typeSizeLow);
+        if (*typeSizeHigh) {
+            printf("..%s\n", typeSizeHigh);
+        } else {
+            putchar('\n');
+        }
+    }
+    if (*typeRangeLow) {
+        printf("Object %s INTEGER range restrictions: %s", name, typeRangeLow);
+        if (*typeRangeHigh) {
+            printf("..%s\n", typeRangeHigh);
+        } else {
+            putchar('\n');
+        }
+    }
+
+    /* struct object_type_syntax *syntax = NULL; */
+    /* ( */
+    /*     struct object_type_syntax **typeptr, */
+    /*     char *name, */
+    /*     char *parType, */
+    /*     char *parTypeSeqOf, */
+    /*     char *parTypeSizeLow, */
+    /*     char *parTypeSizeHigh, */
+    /*     char *parTypeRangeLow, */
+    /*     char *parTypeRangeHigh, */
+    /*     struct mib_parser_data *mib_parser_data, */
+    /*     char **errorptr */
+    /* ) */
+    /* int rc = process_type(&syntax, NULL, type) */
+    
+    DEFINE_NAMED_GROUP(access);
+    DEFINE_NAMED_GROUP(status);
+    DEFINE_NAMED_GROUP(descr);
+    mib_parser_data->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
+
+    /* if (strcmp(access, "read-only") == 0) { */
+    /*     mib_parser_data->current_type->access = ACCESS_READ_ONLY; */
+    /* } */
+    /* if (strcmp(access, "read-write") == 0) { */
+    /*     mib_parser_data->current_type->access = ACCESS_READ_WRITE; */
+    /* } */
+    /* if (strcmp(access, "write-only") == 0) { */
+    /*     mib_parser_data->current_type->access = ACCESS_WRITE_ONLY; */
+    /* } */
+    /* if (strcmp(access, "not-accessible") == 0) { */
+    /*     mib_parser_data->current_type->access = ACCESS_NOT_ACCESSIBLE; */
+    /* } */
+    
+    /* if (strcmp(status, "mandatory") == 0) { */
+    /*     mib_parser_data->current_type->status = STATUS_MANDATORY; */
+    /* } */
+    /* if (strcmp(status, "optional") == 0) { */
+    /*     mib_parser_data->current_type->status = STATUS_OPTIONAL; */
+    /* } */
+    /* if (strcmp(status, "obsolete") == 0) { */
+    /*     mib_parser_data->current_type->status = STATUS_OBSOLETE; */
+    /* } */
+
+    mib_parser_data->current_type->access = access;
+    mib_parser_data->current_type->status = status;
+    mib_parser_data->current_type->description = descr;
+    for (char *cp = descr; *cp; cp++) {
+        if (*cp == '\n' || *cp == '\r') {
+            *cp = ' ';
+        }
+    }
+     
+    return 0;
+}
+
+static struct object_type_syntax *find_type(char *name, struct dllist *types)
+{
+    struct object_type_syntax *type;
+    dllist_foreach(type, types) {
+        if (strcmp(type->name, name) == 0) {
+            return type;
+        }
+    }
+    return NULL;
+}
+
+
 static int handle_type(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
 {
     DEFINE_NAMED_GROUP(name);
@@ -172,6 +246,7 @@ static int handle_type(struct token *token, int *stateptr, struct mib_parser_dat
 
     if (strcmp(parType, "CHOICE") == 0 || strcmp(parType, "SEQUENCE") == 0) {
         mib_parser_data->current_container_type = type;
+        type->u.components = dllist_create();
         *stateptr = STATE_MIB_TYPE_INIT;
         return 0;
     }
@@ -397,7 +472,12 @@ static void print_oid(struct oid *oid, int level)
     for (int i = 0; i < level; i++) {
         putchar(' ');
     }
-    printf("%s(%d)%s\n", oid->name, oid->value, oid->type ? " type" : "");
+    printf("%s(%d)", oid->name, oid->value);
+    if (oid->type) {
+        printf(" (ACCESS: %s, STATUS: %s, DESCRIPTION: %s)\n", oid->type->access, oid->type->status, oid->type->description);
+    } else {
+        putchar('\n');
+    }
     struct oid **oidptr;
     dllist_foreach(oidptr, oid->children) {
         print_oid(*oidptr, level + 1);
@@ -442,9 +522,15 @@ static void print_type(struct object_type_syntax *type)
     if (type->base_type == MIB_TYPE_CHOICE || type->base_type == MIB_TYPE_SEQUENCE) {
         printf("tut\n");
         struct container_type_item *item;
-        dllist_foreach(item, type->u.components) {
-            printf(" %s", item->name);
-            print_type(item->type);
+        int i = 0;
+        if (! type->u.components) {
+            printf("type->u.components is NULL for %s\n", type->name);
+        } else {
+            dllist_foreach(item, type->u.components) {
+                printf("%d\n", i++);
+                printf(" %s", item->name);
+                print_type(item->type);
+            }
         }
     }
 }

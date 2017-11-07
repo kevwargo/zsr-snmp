@@ -47,6 +47,13 @@ enum mib_base_type {
     MIB_TYPE_SEQUENCE_OF
 };
 
+/* enum access { */
+/*     ACCESS_NOT_ACCESSIBLE, */
+/*     ACCESS_READ_ONLY, */
+/*     ACCESS_WRITE_ONLY, */
+/*     ACCESS_READ_WRITE */
+/* }; */
+
 struct range {
     char *low;
     char *high;
@@ -73,8 +80,10 @@ struct object_type_syntax {
 
 struct object_type {
     struct object_type_syntax *syntax;
-    int access;
-    int status;
+    /* int access; */
+    /* int status; */
+    char *access;
+    char *status;
     char *description;
 };
 
