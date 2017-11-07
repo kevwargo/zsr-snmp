@@ -330,11 +330,12 @@ int regex_parse(struct parser *parser, char *subject, void *data, char **errorpt
                 finished = 1;
             }
             pos = token->regex->ovector[1];
+            break;
         }
         if (! matched) {
             free_tokens(parser);
-            static char err[64];
-            snprintf(err, 64, "Syntax error at %d", pos);
+            static char err[32];
+            snprintf(err, 32, "Syntax error at %d", pos);
             *errorptr = err;
             return REGEX_PARSE_ERROR;
         }
@@ -359,6 +360,9 @@ struct dllist **init_states(int count)
 
 char *remove_comments(char *subject)
 {
+    if (! subject) {
+        return NULL;
+    }
     char *error;
     struct regex *comment = regex_prepare("(^|[^\"a-zA-Z0-9_-])(--.*?(--|$))", &error);
     if (! comment) {

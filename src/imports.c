@@ -127,35 +127,3 @@ void free_imports(struct imports *imports)
     free(imports);
 }
 
-static int import_from_string(char *content, struct oid *mib, char *object)
-{
-    struct imports *imports = NULL;
-    if (imports) {
-        struct imports_file_entry *file;
-        dllist_foreach(file, imports->files) {
-            char *filename;
-            if (asprintf(&filename, "%s.txt", file->name) < 0) {
-                perror("asprintf");
-                return -1;
-            }
-            printf("IMPORT INTERNAL %s\n", filename);
-            char *file_content = read_file(filename);
-            char **defptr;
-            dllist_foreach(defptr, file->definitions) {
-                if (import_from_string(file_content, mib, *defptr) < 0) {
-                    return -1;
-                }
-            }
-        }
-    }
-    /* if (parse_oid(content, object, mib) < 0) { */
-    /*     return -1; */
-    /* } */
-    return 0;
-}
-
-int import_file(char *filename, struct oid *mib)
-{
-    printf("IMPORT %s\n", filename);
-    return import_from_string(read_file(filename), mib, "[a-zA-Z_-][a-zA-Z0-9_-]*");
-}

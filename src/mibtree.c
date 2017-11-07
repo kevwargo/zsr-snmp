@@ -2,24 +2,35 @@
 #include <string.h>
 #include <stdio.h>
 #include <pcre.h>
+#include <libgen.h>
 #include "mibtree.h"
 #include "regex.h"
 #include "utils.h"
+#include "imports.h"
 
 
 #define DEFINE_NAMED_GROUP(GROUP_NAME) \
-    char *(GROUP_NAME) = regex_get_named_match(token->regex, token->subject, #GROUP_NAME, errorptr); if (! (GROUP_NAME)) { return -1; }
+    char *(GROUP_NAME) = regex_get_named_match(token->regex, token->subject, #GROUP_NAME, errorptr); if (! (GROUP_NAME)) { return REGEX_PARSE_ERROR; }
 #define DEFINE_GROUP(VAR_NAME, GROUP) \
-    char *(VAR_NAME) = regex_get_match(token->regex, token->subject, GROUP, errorptr); if (! (VAR_NAME)) { return -1; }
+    char *(VAR_NAME) = regex_get_match(token->regex, token->subject, GROUP, errorptr); if (! (VAR_NAME)) { return REGEX_PARSE_ERROR; }
 
-#define TYPE_REGEX \
-    "OCTET" SPACE "+STRING|" \
-    "OBJECT" SPACE "+IDENTIFIER|" \
-    "[a-zA-Z_][a-zA-Z0-9_-]*"
 
+struct mib_parser_data {
+    struct mibtree *mib;
+    int start;
+    int end;
+    char *missing_symbol;
+    struct oid *current_oid;
+    char *current_symbol;
+    int target_oid_defined;
+    struct object_type *current_type;
+    struct object_type_syntax *current_container_type;
+};
+
+#define MIB_ERROR_BUFSIZE 1024
+static char mib_error_buf[MIB_ERROR_BUFSIZE];
 
 static char *normalize_type(char *type);
-
 
 static void __attribute__((__unused__)) print_groups(struct token *token)
 {
@@ -35,31 +46,130 @@ static void __attribute__((__unused__)) print_groups(struct token *token)
     }
 }
 
-static int handle_object_identifier(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static int handle_object_identifier(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
 {
-    DEFINE_NAMED_GROUP(name);
-    printf("objId %s\n", name);
+    /* DEFINE_NAMED_GROUP(name); */
+    /* printf("objId %s\n", name); */
     return 0;
 }
 
-static int handle_object_type(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static int handle_object_type(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
 {
-    DEFINE_NAMED_GROUP(name);
-    printf("objType %s\n", name);
+    /* DEFINE_NAMED_GROUP(name); */
+    /* DEFINE_NAMED_GROUP(type); */
+    /* DEFINE_NAMED_GROUP(syntaxJunk); */
+    /* printf("objType %s\n", name); */
+    mib_parser_data->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
+    
     return 0;
 }
 
-static int handle_type(struct token *token, int *stateptr, struct mibtree *mibtree, char **errorptr)
+static struct object_type_syntax *find_type(char *name, struct dllist *types)
+{
+    struct object_type_syntax *type;
+    dllist_foreach(type, types) {
+        if (strcmp(type->name, name) == 0) {
+            return type;
+        }
+    }
+    return NULL;
+}
+
+static int process_type(
+        struct object_type_syntax **typeptr,
+        char *name,
+        char *parType,
+        char *parTypeSeqOf,
+        char *parTypeSizeLow,
+        char *parTypeSizeHigh,
+        char *parTypeRangeLow,
+        char *parTypeRangeHigh,
+        struct mib_parser_data *mib_parser_data,
+        char **errorptr
+    )
+{
+    struct object_type_syntax new_type;
+    char *parent_type = normalize_type(parType);
+    pcre_free_substring(parType);
+
+    (*typeptr) = find_type(name, mib_parser_data->mib->types);
+    if (! (*typeptr)) {
+        (*typeptr) = dllist_append(mib_parser_data->mib->types, &new_type);
+    }
+    memset((*typeptr), 0, sizeof(struct object_type_syntax));
+    (*typeptr)->name = name;
+    (*typeptr)->parent = find_type(parent_type, mib_parser_data->mib->types);
+    if (! (*typeptr)->parent) {
+        mib_parser_data->missing_symbol = parent_type;
+        return REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR;
+    }
+    (*typeptr)->base_type = (*typeptr)->parent->base_type;
+    
+    if (*parTypeRangeLow) {
+        if ((*typeptr)->parent->base_type != MIB_TYPE_INTEGER) {
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from INTEGER can have range restrictions", name);
+            *errorptr = mib_error_buf;
+            return REGEX_PARSE_ERROR;
+        }
+        (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
+        (*typeptr)->u.range->low = parTypeRangeLow;
+        (*typeptr)->u.range->high = *parTypeRangeHigh ? parTypeRangeHigh : NULL;
+    }
+    if (*parTypeRangeLow) {
+        if ((*typeptr)->parent->base_type != MIB_TYPE_OCTET_STRING) {
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from OCTET STRING can have size restrictions", name);
+            *errorptr = mib_error_buf;
+            return REGEX_PARSE_ERROR;
+        }
+        (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
+        (*typeptr)->u.range->low = parTypeSizeLow;
+        (*typeptr)->u.range->high = *parTypeSizeHigh ? parTypeSizeHigh : NULL;
+    }
+    if (*parTypeSeqOf) {
+        struct object_type_syntax *seq_of_type = dllist_append(mib_parser_data->mib->types, &new_type);
+        memset(seq_of_type, 0, sizeof(struct object_type_syntax));
+        seq_of_type->name = name;
+        seq_of_type->parent = find_type("SEQUENCE OF", mib_parser_data->mib->types);
+        seq_of_type->base_type = MIB_TYPE_SEQUENCE_OF;
+        seq_of_type->u.seq_type = (*typeptr);
+        (*typeptr)->name = NULL;
+    }
+    return 0;
+}
+
+static int handle_type(struct token *token, int *stateptr, struct mib_parser_data *mib_parser_data, char **errorptr)
 {
     DEFINE_NAMED_GROUP(name);
     DEFINE_NAMED_GROUP(parType);
+
+    DEFINE_NAMED_GROUP(parTypeSeqOf);
+
+    DEFINE_NAMED_GROUP(parTypeSizeLow);
+    DEFINE_NAMED_GROUP(parTypeSizeHigh);
+    DEFINE_NAMED_GROUP(parTypeRangeLow);
+    DEFINE_NAMED_GROUP(parTypeRangeHigh);
+
+    DEFINE_NAMED_GROUP(visibility);
+    DEFINE_NAMED_GROUP(typeId);
+    DEFINE_NAMED_GROUP(implexpl);
+
+    struct object_type_syntax *type;
+    int rc = process_type(&type, name, parType, parTypeSeqOf, parTypeSizeLow, parTypeSizeHigh, parTypeRangeLow, parTypeRangeHigh, mib_parser_data, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
+
+    type->visibility = visibility;
+    type->implexpl = implexpl;
+    type->type_id = atoi(typeId);
+    pcre_free_substring(typeId);
+
     if (strcmp(parType, "CHOICE") == 0 || strcmp(parType, "SEQUENCE") == 0) {
-        printf("'%s': %s aggregate type\n", name, parType);
+        mib_parser_data->current_container_type = type;
         *stateptr = STATE_MIB_TYPE_INIT;
         return 0;
     }
-    DEFINE_NAMED_GROUP(typeDescr);
-    printf("'%s' parent type: '%s'\n", name, normalize_type(parType));
+    mib_parser_data->end = token->regex->ovector[1];
     return 1;
 }
 
@@ -70,13 +180,16 @@ static int handle_symbol_def(struct token *token, int *stateptr, void *data, cha
     
     DEFINE_NAMED_GROUP(objId);
     DEFINE_NAMED_GROUP(objType);
-    struct mibtree *mibtree = (struct mibtree *)data;
+    DEFINE_NAMED_GROUP(name);
+    struct mib_parser_data *mib_parser_data = (struct mib_parser_data *)data;
+    mib_parser_data->start = token->regex->ovector[0];
+    mib_parser_data->current_symbol = name;
     if (*objId) {
-        return handle_object_identifier(token, stateptr, mibtree, errorptr);
+        return handle_object_identifier(token, stateptr, mib_parser_data, errorptr);
     } else if (*objType) {
-        return handle_object_type(token, stateptr, mibtree, errorptr);
+        return handle_object_type(token, stateptr, mib_parser_data, errorptr);
     } else {
-        return handle_type(token, stateptr, mibtree, errorptr);
+        return handle_type(token, stateptr, mib_parser_data, errorptr);
     }
 }
 
@@ -105,43 +218,6 @@ static char *normalize_type(char *type)
     return result;
 }
 
-static char *build_type_regex(int subtype)
-{
-    return xasprintf(
-            "%s%s"
-            "("
-              "(?<%s>SEQUENCE" SPACE "+" "OF" SPACE "+" ")?"
-              "(?<%s>" TYPE_REGEX ")"
-              "("
-               SPACE "*"
-               "("
-                "(\\(" SPACE "*SIZE" SPACE "*"
-                    "\\(" SPACE "*(?<%s>[0-9]+)" SPACE "*(\\.\\." SPACE "*(?<%s>[0-9]+)" SPACE "*)?\\)"
-                  SPACE "*\\))|"
-                "("
-                    "\\(" SPACE "*(?<%s>[0-9]+)" SPACE "*(\\.\\." SPACE "*(?<%s>[0-9]+)" SPACE "*)?\\)"
-                ")"
-               ")"
-              ")?"
-            ")?",
-
-            subtype ? 
-                "("
-                  "\\["
-                    "(?<visibility>UNIVERSAL|APPLICATION|CONTEXT-SPECIFIC|PRIVATE)" SPACE "+"
-                    "(?<typeId>[0-9]+)" SPACE "*"
-                  "\\]" SPACE "+"
-                ")?" : "",
-            subtype ? "((?<implexpl>(IM|EX)PLICIT)" SPACE "+" ")?" : "",
-            subtype ? "parTypeSeqOf" : "typeSeqOf",
-            subtype ? "parType" : "type",
-            subtype ? "typeSizeLo" : "sizeLo",
-            subtype ? "typeSizeHi" : "sizeHi",
-            subtype ? "typeRangeLo" : "rangeLo",
-            subtype ? "typeRangeHi" : "rangeHi"
-        );
-}
-
 static int handle_type_init(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     *stateptr = STATE_MIB_TYPE_PART;
@@ -150,14 +226,15 @@ static int handle_type_init(struct token *token, int *stateptr, void *data, char
 
 static int handle_type_part(struct token *token, int *stateptr, void *data, char **errorptr)
 {
-    char *name = regex_get_match(token->regex, token->subject, 1, errorptr);
-    char *type_src = regex_get_match(token->regex, token->subject, 2, errorptr);
-    char *type = normalize_type(type_src);
-    pcre_free_substring(type_src);
-    if (strcmp(token->name, "TYPE_PART") == 0) {
-        printf("mib type part: '%s' '%s'\n", name, type);
+    DEFINE_NAMED_GROUP(name);
+    DEFINE_NAMED_GROUP(type);
+    DEFINE_NAMED_GROUP(comma);
+    /* char *type_norm = normalize_type(type); */
+    pcre_free_substring(type);
+    if (*comma) {
+        /* printf("mib type part: '%s' '%s'\n", name, type_norm); */
     } else {
-        printf("mib type last part: '%s' '%s'\n", name, type);
+        /* printf("mib type last part: '%s' '%s'\n", name, type_norm); */
         *stateptr = STATE_MIB_TYPE_END;
     }
     return 0;
@@ -165,12 +242,95 @@ static int handle_type_part(struct token *token, int *stateptr, void *data, char
 
 static int handle_type_end(struct token *token, int *stateptr, void *data, char **errorptr)
 {
+    ((struct mib_parser_data *)data)->end = token->regex->ovector[1];
     return 1;
 }
+
 
 static int handle_oids_init(struct token *token, int *stateptr, void *data, char **errorptr)
 {
     *stateptr = STATE_MIB_OIDS_NEXT;
+    return 0;
+}
+
+static struct oid *find_oid(char *oid_name, struct oid *root)
+{
+    if (strcmp(root->name, oid_name) == 0) {
+        return root;
+    }
+    struct oid **oidptr;
+    dllist_foreach(oidptr, root->children) {
+        struct oid *oid = find_oid(oid_name, *oidptr);
+        if (oid) {
+            return oid;
+        }
+    }
+    return NULL;
+}
+
+static int process_oid(char *oid, struct mib_parser_data *mib_parser_data, char **errorptr)
+{
+    if (mib_parser_data->current_oid) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Invalid token `%s': symbolic OIDs are allowed only at the beginning", oid);
+        *errorptr = mib_error_buf;
+        return REGEX_PARSE_ERROR;
+    }
+    mib_parser_data->current_oid = find_oid(oid, mib_parser_data->mib->root_oid);
+    if (! mib_parser_data->current_oid) {
+        mib_parser_data->missing_symbol = oid;
+        return REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR;
+    }
+    /* printf("Parent OID %s found\n", oid); */
+    return 0;
+}
+
+static void set_oid(char *name, char *value, struct oid **parentptr, struct oid *root)
+{
+    struct oid *oid = find_oid(name, root);
+    if (oid) {
+        printf("WARNING: OID `%s' already exists\n", name);
+    }
+    int numval = atoi(value);
+    struct oid **oidptr;
+    oid = NULL;
+    dllist_foreach(oidptr, (*parentptr)->children) {
+        if ((*oidptr)->value == numval) {
+            printf("WARNING: an OID with the same value as `%s' already exists\n", name);
+            oid = *oidptr;
+            break;
+        }
+    }
+    if (! oid) {
+        oid = (struct oid *)xcalloc(1, sizeof(struct oid));
+        oid->children = dllist_create();
+        dllist_append((*parentptr)->children, &oid);
+    }
+    oid->name = name;
+    oid->value = numval;
+    *parentptr = oid;
+}
+
+static int process_oid_value(char *value, struct mib_parser_data *mib_parser_data, char **errorptr)
+{
+    if (! mib_parser_data->current_oid) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Invalid token `%s': OID values cannot be the first in OID", value);
+        *errorptr = mib_error_buf;
+        return REGEX_PARSE_ERROR;
+    }
+    set_oid(mib_parser_data->current_symbol, value, &mib_parser_data->current_oid, mib_parser_data->mib->root_oid);
+    mib_parser_data->current_oid->type = mib_parser_data->current_type;
+    mib_parser_data->target_oid_defined = 1;
+    return 0;
+}
+
+static int process_oid_with_value(char *oid, char *value, struct mib_parser_data *mib_parser_data, char **errorptr)
+{
+    if (! mib_parser_data->current_oid) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Invalid token `%s(%s)': OID with values cannot be the first in OID", oid, value);
+        *errorptr = mib_error_buf;
+        return REGEX_PARSE_ERROR;
+    }
+    set_oid(oid, value, &mib_parser_data->current_oid, mib_parser_data->mib->root_oid);
     return 0;
 }
 
@@ -179,27 +339,83 @@ static int handle_oids_next(struct token *token, int *stateptr, void *data, char
     DEFINE_NAMED_GROUP(oid);
     DEFINE_NAMED_GROUP(oidval);
     DEFINE_NAMED_GROUP(val);
+    struct mib_parser_data *mib_parser_data = (struct mib_parser_data *)data;
     if (*val) {
         *stateptr = STATE_MIB_OIDS_END;
-        printf("oid value: '%s'\n", val);
+        return process_oid_value(val, mib_parser_data, errorptr);
     } else if (*oidval) {
-        printf("oid '%s(%s)'\n", oid, oidval);
+        return process_oid_with_value(oid, oidval, mib_parser_data, errorptr);
     } else {
-        printf("oid '%s'\n", oid);
+        return process_oid(oid, mib_parser_data, errorptr);
     }
-    return 0;
 }
 
 static int handle_oids_end(struct token *token, int *stateptr, void *data, char **errorptr)
 {
+    struct mib_parser_data *mib_parser_data = (struct mib_parser_data *)data;
+    if (! mib_parser_data->target_oid_defined) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Invalid token `}': the last OID item must be a value");
+        *errorptr = mib_error_buf;
+        return REGEX_PARSE_ERROR;
+    }
+    mib_parser_data->end = token->regex->ovector[1];
     return 1;
 }
 
-int parse_symbol(char *name, char *content)
+static void print_oid(struct oid *oid, int level)
+{
+    for (int i = 0; i < level; i++) {
+        putchar(' ');
+    }
+    printf("%s(%d)%s\n", oid->name, oid->value, oid->type ? " type" : "");
+    struct oid **oidptr;
+    dllist_foreach(oidptr, oid->children) {
+        print_oid(*oidptr, level + 1);
+    }
+}
+
+void print_oidtree(struct oid *tree)
+{
+    print_oid(tree, 0);
+}
+
+void print_types(struct dllist *types)
+{
+    struct object_type_syntax *type;
+    dllist_foreach(type, types) {
+        char *base_type;
+        switch (type->base_type) {
+            case MIB_TYPE_NULL:
+                base_type = "MIB_TYPE_NULL";
+                break;
+            case MIB_TYPE_INTEGER:
+                base_type = "MIB_TYPE_INTEGER";
+                break;
+            case MIB_TYPE_OBJECT_IDENTIFIER:
+                base_type = "MIB_TYPE_OBJECT_IDENTIFIER";
+                break;
+            case MIB_TYPE_OCTET_STRING:
+                base_type = "MIB_TYPE_OCTET_STRING";
+                break;
+            case MIB_TYPE_SEQUENCE:
+                base_type = "MIB_TYPE_SEQUENCE";
+                break;
+            case MIB_TYPE_CHOICE:
+                base_type = "MIB_TYPE_CHOICE";
+                break;
+            case MIB_TYPE_SEQUENCE_OF:
+                base_type = "MIB_TYPE_SEQUENCE_OF";
+                break;
+            default:
+                base_type = "UNKNOWN_MIB_BASE_TYPE";
+        }
+        printf("Type %s, base_type %s, parent: %s\n", type->name, base_type, type->parent ? type->parent->name : "");
+    }
+}
+
+int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr)
 {
     struct parser parser;
-    char *type_regex = build_type_regex(1);
-    char *type_inplace_regex = build_type_regex(0);
     parser.start_pattern = xasprintf(
             "^\\s*(?<name>%s)"
             SPACE "+"
@@ -208,7 +424,7 @@ int parse_symbol(char *name, char *content)
             ")|(?<objType>"
               "OBJECT-TYPE" SPACE "+.*?"
                 "SYNTAX" SPACE "+"
-                  "%s"
+                    BUILD_TYPE_INPLACE_REGEX("typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh")
                   "(?<syntaxJunk>.*?)" SPACE "+"
                 "((?<accessType>MAX|MIN)-)?ACCESS" SPACE "+"
                   "(?<access>read-only|read-write|write-only|not-accessible|(?<accessJunk>.*?))" SPACE "+"
@@ -220,14 +436,13 @@ int parse_symbol(char *name, char *content)
                   "(\"(?<descr>[^\"]*)\")"
                   ".*?"
             "))" SPACE "+)?"
-            "::=" SPACE "*" "(?<typeDescr>%s)?",
+            "::=" SPACE "*"
+              "(?<typeDescr>"
+                BUILD_TYPE_REGEX("visibility", "typeId", "implexpl", "parTypeSeqOf", "parType", "parTypeSizeLow", "parTypeSizeHigh", "parTypeRangeLow", "parTypeRangeHigh")
+              ")?",
 
-            name,
-            type_inplace_regex,
-            type_regex
+            name
         );
-    free(type_regex);
-    free(type_inplace_regex);
     parser.start_token_handler = handle_symbol_def;
 
     parser.state = STATE_MIB_OIDS_INIT;
@@ -240,14 +455,11 @@ int parse_symbol(char *name, char *content)
     token.name = "BRACE_OPEN";
     dllist_append(parser.states[STATE_MIB_TYPE_INIT], &token);
 
-    token.pattern = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")" SPACE "*" ",";
+    token.pattern = SPACE "*" "(?<name>[a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+"
+        BUILD_TYPE_INPLACE_REGEX("seqOf", "type", "sizeLow", "sizeHigh", "rangeLow", "rangeHigh")
+        "(?<comma>" SPACE "*" ",)?";
     token.handler = handle_type_part;
     token.name = "TYPE_PART";
-    dllist_append(parser.states[STATE_MIB_TYPE_PART], &token);
-
-    token.pattern = SPACE "*" "([a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+" "(" TYPE_REGEX ")";
-    token.handler = handle_type_part;
-    token.name = "TYPE_PART_LAST";
     dllist_append(parser.states[STATE_MIB_TYPE_PART], &token);
 
     token.pattern = SPACE "*" "}";
@@ -270,11 +482,159 @@ int parse_symbol(char *name, char *content)
     token.name = "BRACE_CLOSE";
     dllist_append(parser.states[STATE_MIB_OIDS_END], &token);
 
-    char *error;
-    if (regex_parse(&parser, content, NULL, &error) < 0) {
-        fprintf(stderr, "Parse object %s failed: %s\n", name, error);
-        return -1;
+    struct mib_parser_data mib_parser_data;
+    memset(&mib_parser_data, 0, sizeof (struct mib_parser_data));
+    mib_parser_data.mib = mib;
+    int rc = regex_parse(&parser, content, &mib_parser_data, errorptr);
+    if (rc == REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR) {
+        printf("symbol %s needs %s, entering recursive parse\n", name, mib_parser_data.missing_symbol);
+        rc = parse_symbol(mib_parser_data.missing_symbol, content, mib, errorptr);
+        if (rc == 0) {
+            printf("needed symbol %s found\n", mib_parser_data.missing_symbol);
+            parser.state = STATE_MIB_OIDS_INIT;
+            rc = regex_parse(&parser, content, &mib_parser_data, errorptr);
+            if (rc < 0) {
+                printf("symbol %s second parse failed: %s (%s)\n", name, pcre_strerror(rc), *errorptr);
+            }
+        }
+    }
+    if (rc < 0) {
+        return rc;
+    }
+
+    for (int i = mib_parser_data.start; i < mib_parser_data.end; i++) {
+        content[i] = ' ';
     }
     
     return 0;
+}
+
+
+static int import_from_string(char *content, char *name, struct mibtree *mib, char *dir, char **errorptr, int *imports_parsed)
+{
+    if (! *imports_parsed) {
+        struct imports *imports = parse_imports(content, errorptr);
+        if (! imports) {
+            return REGEX_PARSE_ERROR;
+        }
+        *imports_parsed = 1;
+        struct imports_file_entry **fileptr;
+        dllist_foreach(fileptr, imports->files) {
+            char *file_content;
+            char *file_content_orig;
+            int basenamelen = strlen(dir) + strlen((*fileptr)->name) + 1;
+            char *filename = xmalloc(basenamelen + 5);
+            sprintf(filename, "%s/%s", dir, (*fileptr)->name);
+            file_content_orig = read_file(filename);
+            file_content = remove_comments(file_content_orig);
+            if (! file_content) {
+                sprintf(filename + basenamelen, ".mib");
+                file_content_orig = read_file(filename);
+                file_content = remove_comments(file_content_orig);
+                if (! file_content) {
+                    sprintf(filename + basenamelen, ".txt");
+                    file_content_orig = read_file(filename);
+                    file_content = remove_comments(file_content_orig);
+                    if (! file_content) {
+                        fprintf(stderr, "Skipping %s import\n", (*fileptr)->name);
+                    }
+                }
+            }
+            if (file_content) {
+                char **nameptr;
+                int file_imports_parsed = 0;
+                printf("Importing from file %s\n", filename);
+                dllist_foreach(nameptr, (*fileptr)->definitions) {
+                    import_from_string(file_content, *nameptr, mib, dir, errorptr, &file_imports_parsed);
+                }
+            }
+            free(filename);
+        }
+    }
+    int rc = parse_symbol(name, content, mib, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
+    while (rc >= 0) {
+        rc = parse_symbol(name, content, mib, errorptr);
+    }
+    return rc == REGEX_PARSE_START_TOKEN_NOT_FOUND_ERROR ? 0 : rc;
+}
+
+static struct oid *create_base_oid()
+{
+    struct oid *oid = (struct oid *)xmalloc(sizeof(struct oid));
+    oid->value = 1;
+    oid->name = strdup("iso");
+    oid->children = dllist_create();
+    oid->type = NULL;
+    return oid;
+}
+
+static struct dllist *create_base_types()
+{
+    struct dllist *types = dllist_create();
+
+    struct object_type_syntax type;
+    memset(&type, 0, sizeof(struct object_type_syntax));
+
+    type.name = "NULL";
+    type.base_type = MIB_TYPE_NULL;
+    dllist_append(types, &type);
+
+    type.name = "INTEGER";
+    type.base_type = MIB_TYPE_INTEGER;
+    dllist_append(types, &type);
+
+    type.name = "OBJECT IDENTIFIER";
+    type.base_type = MIB_TYPE_OBJECT_IDENTIFIER;
+    dllist_append(types, &type);
+
+    type.name = "OCTET STRING";
+    type.base_type = MIB_TYPE_OCTET_STRING;
+    dllist_append(types, &type);
+
+    type.name = "SEQUENCE";
+    type.base_type = MIB_TYPE_SEQUENCE;
+    dllist_append(types, &type);
+
+    type.name = "CHOICE";
+    type.base_type = MIB_TYPE_CHOICE;
+    dllist_append(types, &type);
+
+    type.name = "SEQUENCE OF";
+    type.base_type = MIB_TYPE_SEQUENCE_OF;
+    dllist_append(types, &type);
+
+    return types;
+}
+
+struct mibtree *import_file(char *filename)
+{
+    char *content = read_file(filename);
+    if (! content) {
+        perror("read_file");
+        return NULL;
+    }
+    char *content_stripped = remove_comments(content);
+    free(content);
+
+    struct mibtree *mib = (struct mibtree *)xmalloc(sizeof(struct mibtree));
+    mib->root_oid = create_base_oid();
+    mib->types = create_base_types();
+
+    char *fname = xstrdup(filename);
+    char *dir = xstrdup(dirname(fname));
+    free(fname);
+    
+    char *error;
+    int imports_parsed = 0;
+    printf("Importing main file %s\n", filename);
+    int rc = import_from_string(content_stripped, "[a-zA-Z_][a-zA-Z0-9_-]*", mib, dir, &error, &imports_parsed);
+    if (rc < 0) {
+        free(mib);
+        fprintf(stderr, "File `%s' import error: %s\n", filename, error);
+        return NULL;
+    }
+    return mib;
 }

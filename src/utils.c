@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <errno.h>
 
 void *xmalloc(size_t size);
 
@@ -14,6 +15,7 @@ char *read_file(char *filename)
     struct stat st;
     int fd;
     char *buf;
+    int _errno_bak;
     if (stat(filename, &st) < 0) {
         return NULL;
     }
@@ -23,14 +25,18 @@ char *read_file(char *filename)
     }
     buf = (char *)xmalloc(st.st_size + 1);
     if (! buf) {
+        _errno_bak = errno;
         close(fd);
+        errno = _errno_bak;
         return NULL;
     }
     size_t size = read(fd, buf, st.st_size);
+    _errno_bak = errno;
     close(fd);
     if (size < 0) {
         free(buf);
         close(fd);
+        errno = _errno_bak;
         return NULL;
     }
     buf[size] = '\0';

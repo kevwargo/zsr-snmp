@@ -98,20 +98,21 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
 
 static void __attribute__((__unused__)) test_import(char *filename)
 {
-    struct oid mib;
-    mib.value = 1;
-    mib.name = "iso";
-    mib.children = dllist_create();
-    mib.type = NULL;
-    if (import_file(filename, &mib) < 0) {
-        fprintf(stderr, "FILE IMPORT ERROR: %s\n", filename);
+    struct mibtree *mib = import_file(filename);
+    if (! mib) {
+        fprintf(stderr, "File %s import error\n", filename);
         exit(1);
     }
+    print_oidtree(mib->root_oid);
+    print_types(mib->types);
 }
 
 static void __attribute__((__unused__)) test_mibtree(char *filename, char *name)
 {
-    if (parse_symbol(name, remove_comments(read_file(filename))) < 0) {
+    struct mibtree *mib = NULL;
+    char *error;
+    if (parse_symbol(name, remove_comments(read_file(filename)), mib, &error) < 0) {
+        fprintf(stderr, "parse_symbol failed: %s\n", error);
         exit(1);
     }
 }
@@ -136,9 +137,9 @@ int main(int argc, char **argv)
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3])); */
     /* test_regex(argv[1]); */
-    /* test_import(argv[1]); */
+    test_import(argv[1]);
     /* print_imports(argv[1]); */
     /* puts(remove_comments(read_file(argv[1]))); */
-    test_mibtree(argv[1], argv[2]);
+    /* test_mibtree(argv[1], argv[2]); */
     return 0;
 }
