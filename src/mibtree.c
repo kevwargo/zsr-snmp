@@ -92,9 +92,15 @@ static int process_type(
     char *parent_type = normalize_type(parType);
     pcre_free_substring(parType);
 
-    (*typeptr) = find_type(name, mib_parser_data->mib->types);
+    if (name) {
+        (*typeptr) = find_type(name, mib_parser_data->mib->types);
+    }
     if (! (*typeptr)) {
-        (*typeptr) = dllist_append(mib_parser_data->mib->types, &new_type);
+        if (name) {
+            (*typeptr) = dllist_append(mib_parser_data->mib->types, &new_type);
+        } else {
+            (*typeptr) = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+        }
     }
     memset((*typeptr), 0, sizeof(struct object_type_syntax));
     (*typeptr)->name = name;
@@ -107,7 +113,7 @@ static int process_type(
     
     if (*parTypeRangeLow) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_INTEGER) {
-            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from INTEGER can have range restrictions", name);
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from INTEGER can have range restrictions", name ? name : "");
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
@@ -117,7 +123,7 @@ static int process_type(
     }
     if (*parTypeRangeLow) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_OCTET_STRING) {
-            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from OCTET STRING can have size restrictions", name);
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from OCTET STRING can have size restrictions", name ? name : "");
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
@@ -226,15 +232,39 @@ static int handle_type_init(struct token *token, int *stateptr, void *data, char
 
 static int handle_type_part(struct token *token, int *stateptr, void *data, char **errorptr)
 {
+    /* ( */
+    /*     struct object_type_syntax **typeptr, */
+    /*     char *name, */
+    /*     char *parType, */
+    /*     char *parTypeSeqOf, */
+    /*     char *parTypeSizeLow, */
+    /*     char *parTypeSizeHigh, */
+    /*     char *parTypeRangeLow, */
+    /*     char *parTypeRangeHigh, */
+    /*     struct mib_parser_data *mib_parser_data, */
+    /*     char **errorptr */
+    /* ) */
     DEFINE_NAMED_GROUP(name);
-    DEFINE_NAMED_GROUP(type);
     DEFINE_NAMED_GROUP(comma);
-    /* char *type_norm = normalize_type(type); */
-    pcre_free_substring(type);
-    if (*comma) {
-        /* printf("mib type part: '%s' '%s'\n", name, type_norm); */
-    } else {
-        /* printf("mib type last part: '%s' '%s'\n", name, type_norm); */
+    
+    DEFINE_NAMED_GROUP(type);
+    DEFINE_NAMED_GROUP(seqOf);
+    DEFINE_NAMED_GROUP(sizeLow);
+    DEFINE_NAMED_GROUP(sizeHigh);
+    DEFINE_NAMED_GROUP(rangeLow);
+    DEFINE_NAMED_GROUP(rangeHigh);
+
+    struct mib_parser_data *mib_parser_data = (struct mib_parser_data *)data;
+    struct container_type_item item;
+    item.name = name;
+    struct object_type_syntax *container = mib_parser_data->current_container_type;
+    int rc = process_type(&item.type, NULL, type, seqOf, sizeLow, sizeHigh, rangeLow, rangeHigh, mib_parser_data, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
+    mib_parser_data->current_container_type = container;
+    dllist_append(container->u.components, &item);
+    if (! (*comma)) {
         *stateptr = STATE_MIB_TYPE_END;
     }
     return 0;
@@ -379,37 +409,51 @@ void print_oidtree(struct oid *tree)
     print_oid(tree, 0);
 }
 
+static void print_type(struct object_type_syntax *type)
+{
+    
+    char *base_type;
+    switch (type->base_type) {
+        case MIB_TYPE_NULL:
+            base_type = "MIB_TYPE_NULL";
+            break;
+        case MIB_TYPE_INTEGER:
+            base_type = "MIB_TYPE_INTEGER";
+            break;
+        case MIB_TYPE_OBJECT_IDENTIFIER:
+            base_type = "MIB_TYPE_OBJECT_IDENTIFIER";
+            break;
+        case MIB_TYPE_OCTET_STRING:
+            base_type = "MIB_TYPE_OCTET_STRING";
+            break;
+        case MIB_TYPE_SEQUENCE:
+            base_type = "MIB_TYPE_SEQUENCE";
+            break;
+        case MIB_TYPE_CHOICE:
+            base_type = "MIB_TYPE_CHOICE";
+            break;
+        case MIB_TYPE_SEQUENCE_OF:
+            base_type = "MIB_TYPE_SEQUENCE_OF";
+            break;
+        default:
+            base_type = "UNKNOWN_MIB_BASE_TYPE";
+    }
+    printf("Type %s, base_type %s, parent: %s\n", type->name, base_type, type->parent ? type->parent->name : "");
+    if (type->base_type == MIB_TYPE_CHOICE || type->base_type == MIB_TYPE_SEQUENCE) {
+        printf("tut\n");
+        struct container_type_item *item;
+        dllist_foreach(item, type->u.components) {
+            printf(" %s", item->name);
+            print_type(item->type);
+        }
+    }
+}
+
 void print_types(struct dllist *types)
 {
     struct object_type_syntax *type;
     dllist_foreach(type, types) {
-        char *base_type;
-        switch (type->base_type) {
-            case MIB_TYPE_NULL:
-                base_type = "MIB_TYPE_NULL";
-                break;
-            case MIB_TYPE_INTEGER:
-                base_type = "MIB_TYPE_INTEGER";
-                break;
-            case MIB_TYPE_OBJECT_IDENTIFIER:
-                base_type = "MIB_TYPE_OBJECT_IDENTIFIER";
-                break;
-            case MIB_TYPE_OCTET_STRING:
-                base_type = "MIB_TYPE_OCTET_STRING";
-                break;
-            case MIB_TYPE_SEQUENCE:
-                base_type = "MIB_TYPE_SEQUENCE";
-                break;
-            case MIB_TYPE_CHOICE:
-                base_type = "MIB_TYPE_CHOICE";
-                break;
-            case MIB_TYPE_SEQUENCE_OF:
-                base_type = "MIB_TYPE_SEQUENCE_OF";
-                break;
-            default:
-                base_type = "UNKNOWN_MIB_BASE_TYPE";
-        }
-        printf("Type %s, base_type %s, parent: %s\n", type->name, base_type, type->parent ? type->parent->name : "");
+        print_type(type);
     }
 }
 
