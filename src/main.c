@@ -96,15 +96,29 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     putchar('\n');
 }
 
-static void __attribute__((__unused__)) test_import(char *filename)
+static void __attribute__((__unused__)) test_import(char *filename, char *oidstr, char *name)
 {
     struct mibtree *mib = import_file(filename);
     if (! mib) {
         fprintf(stderr, "File %s import error\n", filename);
         exit(1);
     }
-    print_oidtree(mib->root_oid);
-    print_types(mib->types);
+    /* print_oidtree(mib->root_oid); */
+    /* print_types(mib->types); */
+    struct oid *oid = find_oid_by_value(oidstr, mib->root_oid);
+    if (oid) {
+        printf("Found OID %s: %s\n", oidstr, oid->name);
+    } else {
+        printf("OID %s not found\n", oidstr);
+    }
+
+    if ((oid = find_oid(name, mib->root_oid))) {
+        char *s = oid_to_string(oid);
+        printf("Found OID %s: %s\n", name, s);
+        free(s);
+    } else {
+        printf("OID with name %s not found\n", name);
+    }
 }
 
 static void __attribute__((__unused__)) test_mibtree(char *filename, char *name)
@@ -137,7 +151,7 @@ int main(int argc, char **argv)
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3])); */
     /* test_regex(argv[1]); */
-    test_import(argv[1]);
+    test_import(argv[1], argv[2], argv[3]);
     /* print_imports(argv[1]); */
     /* puts(remove_comments(read_file(argv[1]))); */
     /* test_mibtree(argv[1], argv[2]); */

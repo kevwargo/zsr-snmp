@@ -334,7 +334,6 @@ static int handle_type_part(struct token *token, int *stateptr, void *data, char
     spec.par_type_size_high = sizeHigh;
     spec.par_type_range_low = rangeLow;
     spec.par_type_range_high = rangeHigh;
-    printf("before process part: %s %s\n", name, type);
     int rc = process_type(&item, &spec, mpd, errorptr);
     if (rc < 0) {
         return rc;
@@ -360,7 +359,7 @@ static int handle_oids_init(struct token *token, int *stateptr, void *data, char
     return 0;
 }
 
-static struct oid *find_oid(char *oid_name, struct oid *root)
+struct oid *find_oid(char *oid_name, struct oid *root)
 {
     if (strcmp(root->name, oid_name) == 0) {
         return root;
@@ -391,18 +390,46 @@ static int process_oid(char *oid, struct mib_parser_data *mpd, char **errorptr)
     return 0;
 }
 
+char *oid_to_string(struct oid *oid)
+{
+    struct oid *parent = oid;
+    int size = 0;
+    struct dllist *values = dllist_create();
+    do {
+        int val = parent->value;
+        int digits = 1;
+        while (val /= 10) {
+            digits++;
+        }
+        size += digits + 1;
+        dllist_prepend(values, &parent->value);
+        parent = parent->parent;
+    } while (parent);
+    char *result = (char *)xmalloc(size);
+    int *valptr;
+    int pos = 0;
+    dllist_foreach(valptr, values) {
+        pos += sprintf(result + pos, "%d%s", *valptr, _dle->next ? "." : "");
+    }
+    return result;
+}
+
 static void set_oid(char *name, char *value, struct oid **parentptr, struct oid *root)
 {
     struct oid *oid = find_oid(name, root);
     if (oid) {
-        printf("WARNING: OID `%s' already exists\n", name);
+        char *s = oid_to_string(oid);
+        printf("WARNING: OID `%s' (%s) already exists\n", name, s);
+        free(s);
     }
+    oid = NULL;
     int numval = atoi(value);
     struct oid **oidptr;
-    oid = NULL;
     dllist_foreach(oidptr, (*parentptr)->children) {
         if ((*oidptr)->value == numval) {
-            printf("WARNING: an OID with the same value as `%s' already exists\n", name);
+            char *s = oid_to_string(*oidptr);
+            printf("WARNING: Duplicate values for OIDS `%s' and `%s': %s\n", (*oidptr)->name, name, s);
+            free(s);
             oid = *oidptr;
             break;
         }
@@ -414,6 +441,7 @@ static void set_oid(char *name, char *value, struct oid **parentptr, struct oid 
     }
     oid->name = name;
     oid->value = numval;
+    oid->parent = *parentptr;
     *parentptr = oid;
 }
 
@@ -474,7 +502,9 @@ static void print_oid(struct oid *oid, int level)
     for (int i = 0; i < level; i++) {
         putchar(' ');
     }
-    printf("%s(%d)", oid->name, oid->value);
+    char *s = oid_to_string(oid);
+    printf("%s(%d) (%s)", oid->name, oid->value, s);
+    free(s);
     if (oid->type) {
         printf(" (ACCESS: %s, STATUS: %s)\n", oid->type->access, oid->type->status);
     } else {
@@ -623,14 +653,14 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
     mpd.mib = mib;
     int rc = regex_parse(&parser, content, &mpd, errorptr);
     if (rc == REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR) {
-        printf("symbol %s needs %s, entering recursive parse\n", name, mpd.missing_symbol);
+        /* printf("symbol %s needs %s, entering recursive parse\n", name, mpd.missing_symbol); */
         rc = parse_symbol(mpd.missing_symbol, content, mib, errorptr);
         if (rc == 0) {
-            printf("needed symbol %s found\n", mpd.missing_symbol);
+            /* printf("needed symbol %s found\n", mpd.missing_symbol); */
             parser.state = STATE_MIB_OIDS_INIT;
             rc = regex_parse(&parser, content, &mpd, errorptr);
             if (rc < 0) {
-                printf("symbol %s second parse failed: %s (%s)\n", name, pcre_strerror(rc), *errorptr);
+                /* printf("symbol %s second parse failed: %s (%s)\n", name, pcre_strerror(rc), *errorptr); */
             }
         }
     }
@@ -672,14 +702,14 @@ static int import_from_string(char *content, char *name, struct mibtree *mib, ch
                     file_content_orig = read_file(filename);
                     file_content = remove_comments(file_content_orig);
                     if (! file_content) {
-                        fprintf(stderr, "Skipping %s import\n", (*fileptr)->name);
+                        /* fprintf(stderr, "Skipping %s import\n", (*fileptr)->name); */
                     }
                 }
             }
             if (file_content) {
                 char **nameptr;
                 int file_imports_parsed = 0;
-                printf("Importing from file %s\n", filename);
+                /* printf("Importing from file %s\n", filename); */
                 dllist_foreach(nameptr, (*fileptr)->definitions) {
                     import_from_string(file_content, *nameptr, mib, dir, errorptr, &file_imports_parsed);
                 }
@@ -704,6 +734,7 @@ static struct oid *create_base_oid()
     oid->name = strdup("iso");
     oid->children = dllist_create();
     oid->type = NULL;
+    oid->parent = NULL;
     return oid;
 }
 
@@ -778,7 +809,7 @@ struct mibtree *import_file(char *filename)
 
     char *error;
     int imports_parsed = 0;
-    printf("Importing main file %s\n", filename);
+    /* printf("Importing main file %s\n", filename); */
     int rc = import_from_string(content_stripped, "[a-zA-Z_][a-zA-Z0-9_-]*", mib, dir, &error, &imports_parsed);
     if (rc < 0) {
         free(mib);
@@ -786,4 +817,36 @@ struct mibtree *import_file(char *filename)
         return NULL;
     }
     return mib;
+}
+
+static struct oid *find_oid_by_value_destructively(char *string, struct oid *root)
+{
+    char *dot = strchr(string, '.');
+    if (! dot) {
+        if (root->value == atoi(string)) {
+            return root;
+        }
+    } else {
+        *dot = '\0';
+        if (root->value != atoi(string)) {
+            return NULL;
+        }
+        struct oid *oid;
+        struct oid **oidptr;
+        dllist_foreach(oidptr, root->children) {
+            oid = find_oid_by_value(dot + 1, *oidptr);
+            if (oid) {
+                return oid;
+            }
+        }
+    }
+    return NULL;
+}
+
+struct oid *find_oid_by_value(char *string, struct oid *root)
+{
+    char *copy = xstrdup(string);
+    struct oid *result = find_oid_by_value_destructively(copy, root);
+    free(copy);
+    return result;
 }

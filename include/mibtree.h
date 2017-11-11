@@ -85,6 +85,7 @@ struct object_type {
 struct oid {
     int value;
     char *name;
+    struct oid *parent;
     struct dllist *children;
     struct object_type *type;
 };
@@ -119,5 +120,8 @@ extern int parse_symbol(char *name, char *content, struct mibtree *mib, char **e
 extern struct mibtree *import_file(char *filename);
 extern void print_oidtree(struct oid *tree);
 extern void print_types(struct dllist *types);
+extern char *oid_to_string(struct oid *oid);
+extern struct oid *find_oid(char *oid_name, struct oid *root);
+extern struct oid *find_oid_by_value(char *string, struct oid *root);
 
 #endif
