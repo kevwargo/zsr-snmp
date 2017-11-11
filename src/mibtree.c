@@ -27,11 +27,23 @@ struct mib_parser_data {
     struct object_type_syntax *current_container_type;
 };
 
+struct type_syntax_spec {
+    char *name;
+    char *par_type;
+    char *par_type_seq_of;
+    char *par_type_size_low;
+    char *par_type_size_high;
+    char *par_type_range_low;
+    char *par_type_range_high;
+};
+
+
 #define MIB_ERROR_BUFSIZE 1024
 static char mib_error_buf[MIB_ERROR_BUFSIZE];
 
 static char *normalize_type(char *type);
-static struct object_type_syntax *find_type(char *name, struct dllist *types);
+static struct object_type_syntax **find_type(char *name, struct dllist *types);
+
 
 static void __attribute__((__unused__)) print_groups(struct token *token)
 {
@@ -54,69 +66,50 @@ static int handle_object_identifier(struct token *token, int *stateptr, struct m
     return 0;
 }
 
-static int process_type(
-        struct object_type_syntax **typeptr,
-        char *name,
-        char *parType,
-        char *parTypeSeqOf,
-        char *parTypeSizeLow,
-        char *parTypeSizeHigh,
-        char *parTypeRangeLow,
-        char *parTypeRangeHigh,
-        struct mib_parser_data *mpd,
-        char **errorptr
-    )
+static int process_type(struct object_type_syntax **typeptr, struct type_syntax_spec *spec, struct mib_parser_data *mpd, char **errorptr)
 {
-    struct object_type_syntax new_type;
-    char *parent_type = normalize_type(parType);
-
-    if (name) {
-        (*typeptr) = find_type(name, mpd->mib->types);
-    }
-    if (! (*typeptr)) {
-        if (name) {
-            (*typeptr) = dllist_append(mpd->mib->types, &new_type);
-        } else {
-            (*typeptr) = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
-        }
-    }
+    char *parent_type = normalize_type(spec->par_type);
+    (*typeptr) = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset((*typeptr), 0, sizeof(struct object_type_syntax));
-    (*typeptr)->name = name;
-    (*typeptr)->parent = find_type(parent_type, mpd->mib->types);
-    if (! (*typeptr)->parent) {
+    (*typeptr)->name = spec->name;
+    struct object_type_syntax **parptr = find_type(parent_type, mpd->mib->types);
+    if (! parptr) {
         mpd->missing_symbol = parent_type;
         return REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR;
     }
+    (*typeptr)->parent = *parptr;
     (*typeptr)->base_type = (*typeptr)->parent->base_type;
-    
-    if (*parTypeRangeLow) {
+    memcpy(&(*typeptr)->u, &(*parptr)->u, sizeof((*parptr)->u));
+
+    if (*spec->par_type_range_low) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_INTEGER) {
-            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from INTEGER can have range restrictions", name ? name : "");
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from INTEGER can have range restrictions", spec->name ? spec->name : "");
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
         (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
-        (*typeptr)->u.range->low = parTypeRangeLow;
-        (*typeptr)->u.range->high = *parTypeRangeHigh ? parTypeRangeHigh : NULL;
+        (*typeptr)->u.range->low = spec->par_type_range_low;
+        (*typeptr)->u.range->high = *spec->par_type_range_high ? spec->par_type_range_high : NULL;
     }
-    if (*parTypeSizeLow) {
+    if (*spec->par_type_size_low) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_OCTET_STRING) {
-            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from OCTET STRING can have size restrictions", name ? name : "");
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Error parsing type `%s': only types derived from OCTET STRING can have size restrictions", spec->name ? spec->name : "");
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
         (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
-        (*typeptr)->u.range->low = parTypeSizeLow;
-        (*typeptr)->u.range->high = *parTypeSizeHigh ? parTypeSizeHigh : NULL;
+        (*typeptr)->u.range->low = spec->par_type_size_low;
+        (*typeptr)->u.range->high = *spec->par_type_size_high ? spec->par_type_size_high : NULL;
     }
-    if (*parTypeSeqOf) {
-        struct object_type_syntax *seq_of_type = dllist_append(mpd->mib->types, &new_type);
+    if (*spec->par_type_seq_of) {
+        struct object_type_syntax *seq_of_type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
         memset(seq_of_type, 0, sizeof(struct object_type_syntax));
-        seq_of_type->name = name;
-        seq_of_type->parent = find_type("SEQUENCE OF", mpd->mib->types);
+        seq_of_type->name = spec->name;
+        seq_of_type->parent = *find_type("SEQUENCE OF", mpd->mib->types);
         seq_of_type->base_type = MIB_TYPE_SEQUENCE_OF;
         seq_of_type->u.seq_type = (*typeptr);
         (*typeptr)->name = NULL;
+        (*typeptr) = seq_of_type;
     }
     return 0;
 }
@@ -146,7 +139,7 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
     /*     char **errorptr */
     /* ) */
     /* int rc = process_type(&syntax, NULL, type) */
-    
+
     DEFINE_NAMED_GROUP(access);
     DEFINE_NAMED_GROUP(status);
     DEFINE_NAMED_GROUP(descr);
@@ -164,7 +157,7 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
     /* if (strcmp(access, "not-accessible") == 0) { */
     /*     mpd->current_type->access = ACCESS_NOT_ACCESSIBLE; */
     /* } */
-    
+
     /* if (strcmp(status, "mandatory") == 0) { */
     /*     mpd->current_type->status = STATUS_MANDATORY; */
     /* } */
@@ -183,16 +176,16 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
             *cp = ' ';
         }
     }
-     
+
     return 0;
 }
 
-static struct object_type_syntax *find_type(char *name, struct dllist *types)
+static struct object_type_syntax **find_type(char *name, struct dllist *types)
 {
-    struct object_type_syntax *type;
-    dllist_foreach(type, types) {
-        if (strcmp(type->name, name) == 0) {
-            return type;
+    struct object_type_syntax **typeptr;
+    dllist_foreach(typeptr, types) {
+        if (strcmp((*typeptr)->name, name) == 0) {
+            return typeptr;
         }
     }
     return NULL;
@@ -218,15 +211,34 @@ static int handle_type(struct token *token, int *stateptr, struct mib_parser_dat
     DEFINE_NAMED_GROUP(typeDescr);
 
     struct object_type_syntax *type;
-    int rc = process_type(&type, name, parType, parTypeSeqOf, parTypeSizeLow, parTypeSizeHigh, parTypeRangeLow, parTypeRangeHigh, mpd, errorptr);
+    struct type_syntax_spec spec;
+    spec.name = name;
+    spec.par_type = parType;
+    spec.par_type_seq_of = parTypeSeqOf;
+    spec.par_type_size_low = parTypeSizeLow;
+    spec.par_type_size_high = parTypeSizeHigh;
+    spec.par_type_range_low = parTypeRangeLow;
+    spec.par_type_range_high = parTypeRangeHigh;
+    int rc = process_type(&type, &spec, mpd, errorptr);
     if (rc < 0) {
         return rc;
+    }
+
+    struct object_type_syntax **existing_type = find_type(name, mpd->mib->types);
+    if (existing_type) {
+        *existing_type = type;
+    } else {
+        dllist_append(mpd->mib->types, &type);
     }
 
     type->visibility = visibility;
     type->implexpl = implexpl;
     type->type_id = atoi(typeId);
     pcre_free_substring(typeId);
+
+    if (type->base_type == MIB_TYPE_SEQUENCE_OF) {
+        type = type->u.seq_type;
+    }
 
     if (strcmp(parType, "CHOICE") == 0 || strcmp(parType, "SEQUENCE") == 0) {
         mpd->current_container_type = type;
@@ -304,7 +316,7 @@ static int handle_type_part(struct token *token, int *stateptr, void *data, char
     DEFINE_NAMED_GROUP(type);
 
     DEFINE_NAMED_GROUP(comma);
-    
+
     DEFINE_NAMED_GROUP(seqOf);
     DEFINE_NAMED_GROUP(sizeLow);
     DEFINE_NAMED_GROUP(sizeHigh);
@@ -312,11 +324,18 @@ static int handle_type_part(struct token *token, int *stateptr, void *data, char
     DEFINE_NAMED_GROUP(rangeHigh);
 
     struct mib_parser_data *mpd = (struct mib_parser_data *)data;
-    struct container_type_item item;
-    item.name = name;
-    item.type = NULL;
     struct object_type_syntax *container = mpd->current_container_type;
-    int rc = process_type(&item.type, NULL, type, seqOf, sizeLow, sizeHigh, rangeLow, rangeHigh, mpd, errorptr);
+    struct object_type_syntax *item;
+    struct type_syntax_spec spec;
+    spec.name = name;
+    spec.par_type = type;
+    spec.par_type_seq_of = seqOf;
+    spec.par_type_size_low = sizeLow;
+    spec.par_type_size_high = sizeHigh;
+    spec.par_type_range_low = rangeLow;
+    spec.par_type_range_high = rangeHigh;
+    printf("before process part: %s %s\n", name, type);
+    int rc = process_type(&item, &spec, mpd, errorptr);
     if (rc < 0) {
         return rc;
     }
@@ -472,9 +491,9 @@ void print_oidtree(struct oid *tree)
     print_oid(tree, 0);
 }
 
-static void print_type(struct object_type_syntax *type)
+static void print_type(struct object_type_syntax *type, int level)
 {
-    
+
     char *base_type;
     switch (type->base_type) {
         case MIB_TYPE_NULL:
@@ -501,7 +520,10 @@ static void print_type(struct object_type_syntax *type)
         default:
             base_type = "UNKNOWN_MIB_BASE_TYPE";
     }
-    printf("Type %s, base_type %s, parent: %s", type->name, base_type, type->parent ? type->parent->name : "");
+    for (int i = 0; i < level; i++) {
+        putchar('\t');
+    }
+    printf("%s %s, base_type %s, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->parent ? type->parent->name : "");
     if (type->base_type == MIB_TYPE_INTEGER && type->u.range) {
         printf(", range restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
     } else if (type->base_type == MIB_TYPE_OCTET_STRING && type->u.range) {
@@ -510,14 +532,10 @@ static void print_type(struct object_type_syntax *type)
         putchar('\n');
     }
     if (type->base_type == MIB_TYPE_CHOICE || type->base_type == MIB_TYPE_SEQUENCE) {
-        printf("Elements of %s:\n", base_type);
-        struct container_type_item *item;
-        if (! type->u.components) {
-            printf("type->u.components is NULL for %s\n", type->name);
-        } else {
-            dllist_foreach(item, type->u.components) {
-                printf("\t%s: ", item->name);
-                print_type(item->type);
+        struct object_type_syntax **itemptr;
+        if (type->u.components) {
+            dllist_foreach(itemptr, type->u.components) {
+                print_type(*itemptr, level + 1);
             }
         }
     }
@@ -525,9 +543,9 @@ static void print_type(struct object_type_syntax *type)
 
 void print_types(struct dllist *types)
 {
-    struct object_type_syntax *type;
-    dllist_foreach(type, types) {
-        print_type(type);
+    struct object_type_syntax **typeptr;
+    dllist_foreach(typeptr, types) {
+        print_type(*typeptr, 0);
     }
 }
 
@@ -538,7 +556,7 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
             "^\\s*(?<name>%s)"
             SPACE "+"
             "(((?<objId>"
-              "OBJECT" SPACE "+IDENTIFIER"  
+              "OBJECT" SPACE "+IDENTIFIER"
             ")|(?<objType>"
               "OBJECT-TYPE" SPACE "+.*?"
                 "SYNTAX" SPACE "+"
@@ -623,7 +641,7 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
     for (int i = mpd.start; i < mpd.end; i++) {
         content[i] = ' ';
     }
-    
+
     return 0;
 }
 
@@ -693,35 +711,48 @@ static struct dllist *create_base_types()
 {
     struct dllist *types = dllist_create();
 
-    struct object_type_syntax type;
-    memset(&type, 0, sizeof(struct object_type_syntax));
+    struct object_type_syntax *type;
 
-    type.name = "NULL";
-    type.base_type = MIB_TYPE_NULL;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "NULL";
+    type->base_type = MIB_TYPE_NULL;
     dllist_append(types, &type);
 
-    type.name = "INTEGER";
-    type.base_type = MIB_TYPE_INTEGER;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "INTEGER";
+    type->base_type = MIB_TYPE_INTEGER;
     dllist_append(types, &type);
 
-    type.name = "OBJECT IDENTIFIER";
-    type.base_type = MIB_TYPE_OBJECT_IDENTIFIER;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "OBJECT IDENTIFIER";
+    type->base_type = MIB_TYPE_OBJECT_IDENTIFIER;
     dllist_append(types, &type);
 
-    type.name = "OCTET STRING";
-    type.base_type = MIB_TYPE_OCTET_STRING;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "OCTET STRING";
+    type->base_type = MIB_TYPE_OCTET_STRING;
     dllist_append(types, &type);
 
-    type.name = "SEQUENCE";
-    type.base_type = MIB_TYPE_SEQUENCE;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "SEQUENCE";
+    type->base_type = MIB_TYPE_SEQUENCE;
     dllist_append(types, &type);
 
-    type.name = "CHOICE";
-    type.base_type = MIB_TYPE_CHOICE;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "CHOICE";
+    type->base_type = MIB_TYPE_CHOICE;
     dllist_append(types, &type);
 
-    type.name = "SEQUENCE OF";
-    type.base_type = MIB_TYPE_SEQUENCE_OF;
+    type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
+    memset(type, 0, sizeof(struct object_type_syntax));
+    type->name = "SEQUENCE OF";
+    type->base_type = MIB_TYPE_SEQUENCE_OF;
     dllist_append(types, &type);
 
     return types;
@@ -744,7 +775,7 @@ struct mibtree *import_file(char *filename)
     char *fname = xstrdup(filename);
     char *dir = xstrdup(dirname(fname));
     free(fname);
-    
+
     char *error;
     int imports_parsed = 0;
     printf("Importing main file %s\n", filename);

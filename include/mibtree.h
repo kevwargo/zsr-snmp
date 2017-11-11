@@ -59,11 +59,6 @@ struct range {
     char *high;
 };
 
-struct container_type_item {
-    char *name;
-    struct object_type_syntax *type;
-};
-
 struct object_type_syntax {
     char *name;
     struct object_type_syntax *parent;
