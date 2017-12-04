@@ -116,7 +116,6 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
 
 static int handle_object_type(struct token *token, int *stateptr, struct mib_parser_data *mpd, char **errorptr)
 {
-    /* ("typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh") */
     DEFINE_NAMED_GROUP(name);
     DEFINE_NAMED_GROUP(typeSeqOf);
     DEFINE_NAMED_GROUP(type);
@@ -125,49 +124,26 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
     DEFINE_NAMED_GROUP(typeRangeLow);
     DEFINE_NAMED_GROUP(typeRangeHigh);
 
-    /* struct object_type_syntax *syntax = NULL; */
-    /* ( */
-    /*     struct object_type_syntax **typeptr, */
-    /*     char *name, */
-    /*     char *parType, */
-    /*     char *parTypeSeqOf, */
-    /*     char *parTypeSizeLow, */
-    /*     char *parTypeSizeHigh, */
-    /*     char *parTypeRangeLow, */
-    /*     char *parTypeRangeHigh, */
-    /*     struct mib_parser_data *mpd, */
-    /*     char **errorptr */
-    /* ) */
-    /* int rc = process_type(&syntax, NULL, type) */
+    mpd->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
+
+    struct type_syntax_spec spec;
+    spec.name = name;
+    spec.par_type = type;
+    spec.par_type_seq_of = typeSeqOf;
+    spec.par_type_size_low = typeSizeLow;
+    spec.par_type_size_high = typeSizeHigh;
+    spec.par_type_range_low = typeRangeLow;
+    spec.par_type_range_high = typeRangeHigh;
+
+
+    int rc = process_type(&mpd->current_type->syntax, &spec, mpd, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
 
     DEFINE_NAMED_GROUP(access);
     DEFINE_NAMED_GROUP(status);
     DEFINE_NAMED_GROUP(descr);
-    mpd->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
-
-    /* if (strcmp(access, "read-only") == 0) { */
-    /*     mpd->current_type->access = ACCESS_READ_ONLY; */
-    /* } */
-    /* if (strcmp(access, "read-write") == 0) { */
-    /*     mpd->current_type->access = ACCESS_READ_WRITE; */
-    /* } */
-    /* if (strcmp(access, "write-only") == 0) { */
-    /*     mpd->current_type->access = ACCESS_WRITE_ONLY; */
-    /* } */
-    /* if (strcmp(access, "not-accessible") == 0) { */
-    /*     mpd->current_type->access = ACCESS_NOT_ACCESSIBLE; */
-    /* } */
-
-    /* if (strcmp(status, "mandatory") == 0) { */
-    /*     mpd->current_type->status = STATUS_MANDATORY; */
-    /* } */
-    /* if (strcmp(status, "optional") == 0) { */
-    /*     mpd->current_type->status = STATUS_OPTIONAL; */
-    /* } */
-    /* if (strcmp(status, "obsolete") == 0) { */
-    /*     mpd->current_type->status = STATUS_OBSOLETE; */
-    /* } */
-
     mpd->current_type->access = access;
     mpd->current_type->status = status;
     mpd->current_type->description = descr;
@@ -521,7 +497,7 @@ void print_oidtree(struct oid *tree)
     print_oid(tree, 0);
 }
 
-static void print_type(struct object_type_syntax *type, int level)
+static void print_type_internal(struct object_type_syntax *type, int level)
 {
 
     char *base_type;
@@ -558,6 +534,10 @@ static void print_type(struct object_type_syntax *type, int level)
         printf(", range restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
     } else if (type->base_type == MIB_TYPE_OCTET_STRING && type->u.range) {
         printf(", size restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
+    } else if (type->base_type == MIB_TYPE_SEQUENCE_OF) {
+        printf(", seq type: ");
+        print_type_internal(type->u.seq_type, 0);
+        putchar('\n');
     } else {
         putchar('\n');
     }
@@ -565,17 +545,22 @@ static void print_type(struct object_type_syntax *type, int level)
         struct object_type_syntax **itemptr;
         if (type->u.components) {
             dllist_foreach(itemptr, type->u.components) {
-                print_type(*itemptr, level + 1);
+                print_type_internal(*itemptr, level + 1);
             }
         }
     }
+}
+
+void print_type(struct object_type_syntax *type)
+{
+    print_type_internal(type, 0);
 }
 
 void print_types(struct dllist *types)
 {
     struct object_type_syntax **typeptr;
     dllist_foreach(typeptr, types) {
-        print_type(*typeptr, 0);
+        print_type_internal(*typeptr, 0);
     }
 }
 

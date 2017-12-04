@@ -276,12 +276,9 @@ static int match_start_token(struct parser *parser, char *subject, int len, int 
     }
     if (parser->start_token_handler) {
         rc = parser->start_token_handler(&start_token, &parser->state, data, errorptr);
-        if (rc < 0) {
+        if (rc != 0) {
             regex_free(start_token.regex);
-            return REGEX_PARSE_ERROR;
-        } else if (rc > 0) {
-            regex_free(start_token.regex);
-            return 1;
+            return rc;
         }
     }
     *posptr = start_token.regex->ovector[1];
