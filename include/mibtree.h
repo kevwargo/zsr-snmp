@@ -7,7 +7,16 @@
     "OBJECT" SPACE "+IDENTIFIER|" \
     "[a-zA-Z_][a-zA-Z0-9_-]*"
     
-#define BUILD_TYPE_INPLACE_REGEX(GROUP_seq_of, GROUP_type, GROUP_size_low, GROUP_size_high, GROUP_range_low, GROUP_range_high) \
+#define BUILD_TYPE_REGEX(GROUP_visibility, GROUP_tag, GROUP_implexpl, GROUP_seq_of, GROUP_type, GROUP_size_low, GROUP_size_high, GROUP_range_low, GROUP_range_high) \
+    "(" \
+     "(" \
+      "\\[" \
+        "((?<" GROUP_visibility ">UNIVERSAL|APPLICATION|CONTEXT-SPECIFIC|PRIVATE)" SPACE "*)?" \
+        "((?<" GROUP_tag ">[0-9]+)" SPACE "*)?" \
+      "\\]" SPACE "+" \
+     ")?" \
+      "((?<" GROUP_implexpl ">(IM|EX)PLICIT)" SPACE "+)?" \
+    ")?" \
     "(" \
       "(?<" GROUP_seq_of ">SEQUENCE" SPACE "+" "OF" SPACE "+" ")?" \
       "(?<" GROUP_type ">" TYPE_REGEX ")" \
@@ -25,16 +34,6 @@
        ")" \
       ")?" \
     ")"
-
-#define BUILD_TYPE_REGEX(GROUP_visibility, GROUP_type_id, GROUP_implexpl, GROUP_seq_of, GROUP_type, GROUP_size_low, GROUP_size_high, GROUP_range_low, GROUP_range_high) \
-    "(" \
-      "\\[" \
-        "(?<" GROUP_visibility ">UNIVERSAL|APPLICATION|CONTEXT-SPECIFIC|PRIVATE)" SPACE "+" \
-        "(?<" GROUP_type_id ">[0-9]+)" SPACE "*" \
-      "\\]" SPACE "+" \
-      "(?<" GROUP_implexpl ">(IM|EX)PLICIT)" SPACE "+" \
-    ")?" \
-    BUILD_TYPE_INPLACE_REGEX(GROUP_seq_of, GROUP_type, GROUP_size_low, GROUP_size_high, GROUP_range_low, GROUP_range_high)
 
 
 enum mib_base_type {
@@ -62,9 +61,9 @@ struct range {
 struct object_type_syntax {
     char *name;
     struct object_type_syntax *parent;
-    char *visibility;
-    int type_id;
-    char *implexpl;
+    char visibility;
+    int tag;
+    char is_implicit;
     enum mib_base_type base_type;
     union {
         struct range *range;

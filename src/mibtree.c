@@ -35,6 +35,9 @@ struct type_syntax_spec {
     char *par_type_size_high;
     char *par_type_range_low;
     char *par_type_range_high;
+    char *visibility;
+    char *implexpl;
+    char *tag;
 };
 
 
@@ -111,6 +114,25 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
         (*typeptr)->name = NULL;
         (*typeptr) = seq_of_type;
     }
+    if (strcmp(spec->visibility, "UNIVERSAL") == 0) {
+        (*typeptr)->visibility = 0;
+    } else if (strcmp(spec->visibility, "APPLICATION") == 0) {
+        (*typeptr)->visibility = 1;
+    } else if (strcmp(spec->visibility, "CONTEXT-SPECIFIC") == 0) {
+        (*typeptr)->visibility = 2;
+    } else if (strcmp(spec->visibility, "PRIVATE") == 0) {
+        (*typeptr)->visibility = 3;
+    } else if (strcmp(spec->implexpl, "IMPLICIT") == 0) {
+        (*typeptr)->visibility = 2;
+    } else {
+        (*typeptr)->visibility = 0;
+    }
+    (*typeptr)->is_implicit = (strcmp(spec->implexpl, "IMPLICIT") == 0);
+    if (*spec->tag) {
+        (*typeptr)->tag = atoi(spec->tag);
+    } else {
+        (*typeptr)->tag = 0;
+    }
     return 0;
 }
 
@@ -123,6 +145,9 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
     DEFINE_NAMED_GROUP(typeSizeHigh);
     DEFINE_NAMED_GROUP(typeRangeLow);
     DEFINE_NAMED_GROUP(typeRangeHigh);
+    DEFINE_NAMED_GROUP(syntaxVisibility);
+    DEFINE_NAMED_GROUP(syntaxImplexpl);
+    DEFINE_NAMED_GROUP(syntaxTag);
 
     mpd->current_type = (struct object_type *)xmalloc(sizeof(struct object_type));
 
@@ -134,7 +159,9 @@ static int handle_object_type(struct token *token, int *stateptr, struct mib_par
     spec.par_type_size_high = typeSizeHigh;
     spec.par_type_range_low = typeRangeLow;
     spec.par_type_range_high = typeRangeHigh;
-
+    spec.visibility = syntaxVisibility;
+    spec.implexpl = syntaxImplexpl;
+    spec.tag = syntaxTag;
 
     int rc = process_type(&mpd->current_type->syntax, &spec, mpd, errorptr);
     if (rc < 0) {
@@ -181,7 +208,7 @@ static int handle_type(struct token *token, int *stateptr, struct mib_parser_dat
     DEFINE_NAMED_GROUP(parTypeRangeHigh);
 
     DEFINE_NAMED_GROUP(visibility);
-    DEFINE_NAMED_GROUP(typeId);
+    DEFINE_NAMED_GROUP(tag);
     DEFINE_NAMED_GROUP(implexpl);
 
     DEFINE_NAMED_GROUP(typeDescr);
@@ -195,6 +222,9 @@ static int handle_type(struct token *token, int *stateptr, struct mib_parser_dat
     spec.par_type_size_high = parTypeSizeHigh;
     spec.par_type_range_low = parTypeRangeLow;
     spec.par_type_range_high = parTypeRangeHigh;
+    spec.visibility = visibility;
+    spec.implexpl = implexpl;
+    spec.tag = tag;
     int rc = process_type(&type, &spec, mpd, errorptr);
     if (rc < 0) {
         return rc;
@@ -206,11 +236,6 @@ static int handle_type(struct token *token, int *stateptr, struct mib_parser_dat
     } else {
         dllist_append(mpd->mib->types, &type);
     }
-
-    type->visibility = visibility;
-    type->implexpl = implexpl;
-    type->type_id = atoi(typeId);
-    pcre_free_substring(typeId);
 
     if (type->base_type == MIB_TYPE_SEQUENCE_OF) {
         type = type->u.seq_type;
@@ -276,28 +301,17 @@ static int handle_type_init(struct token *token, int *stateptr, void *data, char
 
 static int handle_type_part(struct token *token, int *stateptr, void *data, char **errorptr)
 {
-    /* ( */
-    /*     struct object_type_syntax **typeptr, */
-    /*     char *name, */
-    /*     char *parType, */
-    /*     char *parTypeSeqOf, */
-    /*     char *parTypeSizeLow, */
-    /*     char *parTypeSizeHigh, */
-    /*     char *parTypeRangeLow, */
-    /*     char *parTypeRangeHigh, */
-    /*     struct mib_parser_data *mpd, */
-    /*     char **errorptr */
-    /* ) */
     DEFINE_NAMED_GROUP(name);
     DEFINE_NAMED_GROUP(type);
-
-    DEFINE_NAMED_GROUP(comma);
-
     DEFINE_NAMED_GROUP(seqOf);
     DEFINE_NAMED_GROUP(sizeLow);
     DEFINE_NAMED_GROUP(sizeHigh);
     DEFINE_NAMED_GROUP(rangeLow);
     DEFINE_NAMED_GROUP(rangeHigh);
+    DEFINE_NAMED_GROUP(visibility);
+    DEFINE_NAMED_GROUP(implexpl);
+    DEFINE_NAMED_GROUP(tag);
+    DEFINE_NAMED_GROUP(comma);
 
     struct mib_parser_data *mpd = (struct mib_parser_data *)data;
     struct object_type_syntax *container = mpd->current_container_type;
@@ -310,6 +324,9 @@ static int handle_type_part(struct token *token, int *stateptr, void *data, char
     spec.par_type_size_high = sizeHigh;
     spec.par_type_range_low = rangeLow;
     spec.par_type_range_high = rangeHigh;
+    spec.visibility = visibility;
+    spec.implexpl = implexpl;
+    spec.tag = tag;
     int rc = process_type(&item, &spec, mpd, errorptr);
     if (rc < 0) {
         return rc;
@@ -529,7 +546,7 @@ static void print_type_internal(struct object_type_syntax *type, int level)
     for (int i = 0; i < level; i++) {
         putchar('\t');
     }
-    printf("%s %s, base_type %s, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->parent ? type->parent->name : "");
+    printf("%s %s, base_type %s, vis: %d, impl: %s, tag: %d, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->visibility, type->is_implicit ? "yes" : "no", type->tag, type->parent ? type->parent->name : "");
     if (type->base_type == MIB_TYPE_INTEGER && type->u.range) {
         printf(", range restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
     } else if (type->base_type == MIB_TYPE_OCTET_STRING && type->u.range) {
@@ -575,7 +592,7 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
             ")|(?<objType>"
               "OBJECT-TYPE" SPACE "+.*?"
                 "SYNTAX" SPACE "+"
-                    BUILD_TYPE_INPLACE_REGEX("typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh")
+                    BUILD_TYPE_REGEX("syntaxVisibility", "syntaxTag", "syntaxImplexpl", "typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh")
                   "(?<syntaxJunk>.*?)" SPACE "+"
                 "((?<accessType>MAX|MIN)-)?ACCESS" SPACE "+"
                   "(?<access>read-only|read-write|write-only|not-accessible|(?<accessJunk>.*?))" SPACE "+"
@@ -589,7 +606,7 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
             "))" SPACE "+)?"
             "::=" SPACE "*"
               "(?<typeDescr>"
-                BUILD_TYPE_REGEX("visibility", "typeId", "implexpl", "parTypeSeqOf", "parType", "parTypeSizeLow", "parTypeSizeHigh", "parTypeRangeLow", "parTypeRangeHigh")
+                BUILD_TYPE_REGEX("visibility", "tag", "implexpl", "parTypeSeqOf", "parType", "parTypeSizeLow", "parTypeSizeHigh", "parTypeRangeLow", "parTypeRangeHigh")
               ")?",
 
             name
@@ -607,7 +624,7 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
     dllist_append(parser.states[STATE_MIB_TYPE_INIT], &token);
 
     token.pattern = SPACE "*" "(?<name>[a-zA-Z_][a-zA-Z0-9_-]*)" SPACE "+"
-        BUILD_TYPE_INPLACE_REGEX("seqOf", "type", "sizeLow", "sizeHigh", "rangeLow", "rangeHigh")
+        BUILD_TYPE_REGEX("visibility", "tag", "implexpl", "seqOf", "type", "sizeLow", "sizeHigh", "rangeLow", "rangeHigh")
         "(?<comma>" SPACE "*" ",)?";
     token.handler = handle_type_part;
     token.name = "TYPE_PART";
