@@ -114,6 +114,7 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
         (*typeptr)->name = NULL;
         (*typeptr) = seq_of_type;
     }
+    (*typeptr)->is_explicit = (strcmp(spec->implexpl, "EXPLICIT") == 0);
     if (strcmp(spec->visibility, "UNIVERSAL") == 0) {
         (*typeptr)->visibility = 0;
     } else if (strcmp(spec->visibility, "APPLICATION") == 0) {
@@ -122,12 +123,11 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
         (*typeptr)->visibility = 2;
     } else if (strcmp(spec->visibility, "PRIVATE") == 0) {
         (*typeptr)->visibility = 3;
-    } else if (strcmp(spec->implexpl, "IMPLICIT") == 0) {
+    } else if (!(*typeptr)->is_explicit) {
         (*typeptr)->visibility = 2;
     } else {
         (*typeptr)->visibility = 0;
     }
-    (*typeptr)->is_implicit = (strcmp(spec->implexpl, "IMPLICIT") == 0);
     if (*spec->tag) {
         (*typeptr)->tag = atoi(spec->tag);
     } else {
@@ -546,7 +546,7 @@ static void print_type_internal(struct object_type_syntax *type, int level)
     for (int i = 0; i < level; i++) {
         putchar('\t');
     }
-    printf("%s %s, base_type %s, vis: %d, impl: %s, tag: %d, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->visibility, type->is_implicit ? "yes" : "no", type->tag, type->parent ? type->parent->name : "");
+    printf("%s %s, base_type %s, vis: %d, expl: %s, tag: %d, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->visibility, type->is_explicit ? "yes" : "no", type->tag, type->parent ? type->parent->name : "");
     if (type->base_type == MIB_TYPE_INTEGER && type->u.range) {
         printf(", range restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
     } else if (type->base_type == MIB_TYPE_OCTET_STRING && type->u.range) {

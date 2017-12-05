@@ -63,7 +63,7 @@ struct object_type_syntax {
     struct object_type_syntax *parent;
     char visibility;
     int tag;
-    char is_implicit;
+    char is_explicit;
     enum mib_base_type base_type;
     union {
         struct range *range;
