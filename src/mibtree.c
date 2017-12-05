@@ -750,42 +750,56 @@ static struct dllist *create_base_types()
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "NULL";
     type->base_type = MIB_TYPE_NULL;
+    type->is_explicit = 1;
+    type->tag = 5;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "INTEGER";
     type->base_type = MIB_TYPE_INTEGER;
+    type->is_explicit = 1;
+    type->tag = 2;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "OBJECT IDENTIFIER";
     type->base_type = MIB_TYPE_OBJECT_IDENTIFIER;
+    type->is_explicit = 1;
+    type->tag = 6;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "OCTET STRING";
     type->base_type = MIB_TYPE_OCTET_STRING;
+    type->is_explicit = 1;
+    type->tag = 4;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "SEQUENCE";
     type->base_type = MIB_TYPE_SEQUENCE;
+    type->is_explicit = 1;
+    type->tag = 16;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "CHOICE";
     type->base_type = MIB_TYPE_CHOICE;
+    type->is_explicit = 1;
+    type->tag = 0;
     dllist_append(types, &type);
 
     type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
     memset(type, 0, sizeof(struct object_type_syntax));
     type->name = "SEQUENCE OF";
     type->base_type = MIB_TYPE_SEQUENCE_OF;
+    type->is_explicit = 1;
+    type->tag = 16;
     dllist_append(types, &type);
 
     return types;

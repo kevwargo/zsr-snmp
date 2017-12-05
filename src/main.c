@@ -5,6 +5,8 @@
 #include "imports.h"
 #include "mibtree.h"
 #include "utils.h"
+#include "json-c/json.h"
+#include "json-c/json_tokener.h"
 
 static void __attribute__((__unused__)) print_imports(char *filename)
 {
@@ -153,5 +155,16 @@ int main(int argc, char **argv)
     /* print_imports(argv[1]); */
     /* puts(remove_comments(read_file(argv[1]))); */
     /* test_mibtree(argv[1], argv[2]); */
+    /* struct json_object *obj = json_tokener_parse(argv[1]); */
+    /* if (!obj) { */
+    /*     return 1; */
+    /* } */
+    /* printf("%s\n", json_object_to_json_string(obj)); */
+    /* array_list *list = json_object_get_array(obj); */
+    /* int len = array_list_length(list); */
+    /* for (int i = 0; i < len; i++) { */
+    /*     json_object *component_obj = array_list_get_idx(list, i); */
+    /*     printf(" %s\n", json_object_to_json_string(component_obj)); */
+    /* } */
     return 0;
 }
