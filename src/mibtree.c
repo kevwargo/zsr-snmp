@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <pcre.h>
 #include <libgen.h>
+#include <errno.h>
 #include "mibtree.h"
 #include "regex.h"
 #include "utils.h"
@@ -62,10 +63,60 @@ static void __attribute__((__unused__)) print_groups(struct token *token)
     }
 }
 
+static int parse_num(char *source, unsigned long long *numptr, char **errorptr)
+{
+    if (! *source) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Number string cannot be empty");
+        return -1;
+    }
+    char *end;
+    errno = 0;
+    unsigned long long result = strtoull(source, &end, 10);
+    if (*end) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Invalid character '%c' in number string at pos %d", *end, (int)(end - source));
+        *errorptr = mib_error_buf;
+        return -1;
+    }
+    if (errno != 0) {
+        snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "Number parse error: %s", strerror(errno));
+        *errorptr = mib_error_buf;
+        return -1;
+    }
+    *numptr = result;
+    return 0;
+}
+
 static int handle_object_identifier(struct token *token, int *stateptr, struct mib_parser_data *mpd, char **errorptr)
 {
     /* DEFINE_NAMED_GROUP(name); */
     /* printf("objId %s\n", name); */
+    return 0;
+}
+
+static int parse_range(struct object_type_syntax *type, char *low, char *high, char **errorptr)
+{
+    type->u.range = (struct range *)xmalloc(sizeof(struct range));
+    memset(type->u.range, 0, sizeof(struct range));
+
+    unsigned long long number;
+    int rc = parse_num(low, &number, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
+    type->u.range->low = (struct number *)xmalloc(sizeof(struct number));
+    type->u.range->low->value.u = number;
+    type->u.range->low->is_signed = (*low == '-');
+
+    if (high && *high) {
+        rc = parse_num(high, &number, errorptr);
+        if (rc < 0) {
+            return rc;
+        }
+        type->u.range->high = (struct number *)xmalloc(sizeof(struct number));
+        type->u.range->high->value.u = number;
+        type->u.range->high->is_signed = (*high == '-');
+    }
+
     return 0;
 }
 
@@ -82,7 +133,10 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
     }
     (*typeptr)->parent = *parptr;
     (*typeptr)->base_type = (*typeptr)->parent->base_type;
-    memcpy(&(*typeptr)->u, &(*parptr)->u, sizeof((*parptr)->u));
+    if ((*typeptr)->parent->base_type == MIB_TYPE_INTEGER
+            || (*typeptr)->parent->base_type == MIB_TYPE_OCTET_STRING) {
+        (*typeptr)->u.range = (*parptr)->u.range;
+    }
 
     if (*spec->par_type_range_low) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_INTEGER) {
@@ -90,9 +144,10 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
-        (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
-        (*typeptr)->u.range->low = spec->par_type_range_low;
-        (*typeptr)->u.range->high = *spec->par_type_range_high ? spec->par_type_range_high : NULL;
+        int rc = parse_range(*typeptr, spec->par_type_range_low, spec->par_type_range_high, errorptr);
+        if (rc < 0) {
+            return rc;
+        }
     }
     if (*spec->par_type_size_low) {
         if ((*typeptr)->parent->base_type != MIB_TYPE_OCTET_STRING) {
@@ -100,9 +155,10 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
             *errorptr = mib_error_buf;
             return REGEX_PARSE_ERROR;
         }
-        (*typeptr)->u.range = (struct range *)xmalloc(sizeof(struct range));
-        (*typeptr)->u.range->low = spec->par_type_size_low;
-        (*typeptr)->u.range->high = *spec->par_type_size_high ? spec->par_type_size_high : NULL;
+        int rc = parse_range(*typeptr, spec->par_type_size_low, spec->par_type_size_high, errorptr);
+        if (rc < 0) {
+            return rc;
+        }
     }
     if (*spec->par_type_seq_of) {
         struct object_type_syntax *seq_of_type = (struct object_type_syntax *)xmalloc(sizeof(struct object_type_syntax));
@@ -123,15 +179,18 @@ static int process_type(struct object_type_syntax **typeptr, struct type_syntax_
         (*typeptr)->visibility = 2;
     } else if (strcmp(spec->visibility, "PRIVATE") == 0) {
         (*typeptr)->visibility = 3;
-    } else if (!(*typeptr)->is_explicit) {
+    } else if (strcmp(spec->implexpl, "IMPLICIT") == 0) {
         (*typeptr)->visibility = 2;
     } else {
         (*typeptr)->visibility = 0;
     }
     if (*spec->tag) {
-        (*typeptr)->tag = atoi(spec->tag);
+        int rc = parse_num(spec->tag, &(*typeptr)->tag, errorptr);
+        if (rc < 0) {
+            return rc;
+        }
     } else {
-        (*typeptr)->tag = 0;
+        (*typeptr)->tag = (*typeptr)->parent->tag;
     }
     return 0;
 }
@@ -407,7 +466,7 @@ char *oid_to_string(struct oid *oid)
     return result;
 }
 
-static void set_oid(char *name, char *value, struct oid **parentptr, struct oid *root)
+static int set_oid(char *name, char *value, struct oid **parentptr, struct oid *root, char **errorptr)
 {
     struct oid *oid = find_oid(name, root);
     if (oid) {
@@ -416,10 +475,14 @@ static void set_oid(char *name, char *value, struct oid **parentptr, struct oid 
         free(s);
     }
     oid = NULL;
-    int numval = atoi(value);
+    unsigned long long numval;
+    int rc = parse_num(value, &numval, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
     struct oid **oidptr;
     dllist_foreach(oidptr, (*parentptr)->children) {
-        if ((*oidptr)->value == numval) {
+        if ((*oidptr)->value == (int)numval) {
             char *s = oid_to_string(*oidptr);
             printf("WARNING: Duplicate values for OIDS `%s' and `%s': %s\n", (*oidptr)->name, name, s);
             free(s);
@@ -433,9 +496,10 @@ static void set_oid(char *name, char *value, struct oid **parentptr, struct oid 
         dllist_append((*parentptr)->children, &oid);
     }
     oid->name = name;
-    oid->value = numval;
+    oid->value = (int)numval;
     oid->parent = *parentptr;
     *parentptr = oid;
+    return 0;
 }
 
 static int process_oid_value(char *value, struct mib_parser_data *mpd, char **errorptr)
@@ -445,7 +509,10 @@ static int process_oid_value(char *value, struct mib_parser_data *mpd, char **er
         *errorptr = mib_error_buf;
         return REGEX_PARSE_ERROR;
     }
-    set_oid(mpd->current_symbol, value, &mpd->current_oid, mpd->mib->root_oid);
+    int rc = set_oid(mpd->current_symbol, value, &mpd->current_oid, mpd->mib->root_oid, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
     mpd->current_oid->type = mpd->current_type;
     mpd->target_oid_defined = 1;
     return 0;
@@ -458,7 +525,10 @@ static int process_oid_with_value(char *oid, char *value, struct mib_parser_data
         *errorptr = mib_error_buf;
         return REGEX_PARSE_ERROR;
     }
-    set_oid(oid, value, &mpd->current_oid, mpd->mib->root_oid);
+    int rc = set_oid(oid, value, &mpd->current_oid, mpd->mib->root_oid, errorptr);
+    if (rc < 0) {
+        return rc;
+    }
     return 0;
 }
 
@@ -514,6 +584,31 @@ void print_oidtree(struct oid *tree)
     print_oid(tree, 0);
 }
 
+static char *strnumber(struct number *number) {
+    char *result = (char *)xmalloc(24);
+    if (number->is_signed) {
+        snprintf(result, 24, "%lld", number->value.s);
+    } else {
+        snprintf(result, 24, "%llu", number->value.u);
+    }
+    return result;
+}
+
+static char *strrange(struct range *range)
+{
+    static char result[64];
+    char *num = strnumber(range->low);
+    snprintf(result, 64, num);
+    free(num);
+    if (range->high) {
+        strcat(result, "..");
+        num = strnumber(range->high);
+        strcat(result, num);
+        free(num);
+    }
+    return result;
+}
+
 static void print_type_internal(struct object_type_syntax *type, int level)
 {
 
@@ -546,12 +641,12 @@ static void print_type_internal(struct object_type_syntax *type, int level)
     for (int i = 0; i < level; i++) {
         putchar('\t');
     }
-    printf("%s %s, base_type %s, vis: %d, expl: %s, tag: %d, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->visibility, type->is_explicit ? "yes" : "no", type->tag, type->parent ? type->parent->name : "");
+    printf("%s %s, base_type %s, vis: %d, expl: %s, tag: %llu, parent: %s", level == 0 ? "Type" : "Subtype", type->name, base_type, type->visibility, type->is_explicit ? "yes" : "no", type->tag, type->parent ? type->parent->name : "");
     if (type->base_type == MIB_TYPE_INTEGER && type->u.range) {
-        printf(", range restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
+        printf(", range restrictions: %s\n", strrange(type->u.range));
     } else if (type->base_type == MIB_TYPE_OCTET_STRING && type->u.range) {
-        printf(", size restrictions: %s%s%s\n", type->u.range->low, type->u.range->high ? ".." : "", type->u.range->high ? type->u.range->high : "");
-    } else if (type->base_type == MIB_TYPE_SEQUENCE_OF) {
+        printf(", size restrictions: %s\n", strrange(type->u.range));
+    } else if (type->base_type == MIB_TYPE_SEQUENCE_OF && type->u.seq_type) {
         printf(", seq type: ");
         print_type_internal(type->u.seq_type, 0);
         putchar('\n');
@@ -587,23 +682,27 @@ int parse_symbol(char *name, char *content, struct mibtree *mib, char **errorptr
     parser.start_pattern = xasprintf(
             "^\\s*(?<name>%s)"
             SPACE "+"
-            "(((?<objId>"
-              "OBJECT" SPACE "+IDENTIFIER"
-            ")|(?<objType>"
-              "OBJECT-TYPE" SPACE "+.*?"
-                "SYNTAX" SPACE "+"
-                    BUILD_TYPE_REGEX("syntaxVisibility", "syntaxTag", "syntaxImplexpl", "typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh")
-                  "(?<syntaxJunk>.*?)" SPACE "+"
-                "((?<accessType>MAX|MIN)-)?ACCESS" SPACE "+"
-                  "(?<access>read-only|read-write|write-only|not-accessible|(?<accessJunk>.*?))" SPACE "+"
-                  ".*?"
-                "STATUS" SPACE "+"
-                  "(?<status>mandatory|optional|obsolete|(?<statusJunk>.*?))" SPACE "+"
-                  ".*?"
-                "DESCRIPTION" SPACE "+"
-                  "(\"(?<descr>[^\"]*)\")"
-                  ".*?"
-            "))" SPACE "+)?"
+            "("
+              "("
+                "(?<objId>OBJECT" SPACE "+IDENTIFIER)"
+              "|"
+                "(?<objType>"
+                  "OBJECT-TYPE" SPACE "+.*?"
+                    "SYNTAX" SPACE "+"
+                        BUILD_TYPE_REGEX("syntaxVisibility", "syntaxTag", "syntaxImplexpl", "typeSeqOf", "type", "typeSizeLow", "typeSizeHigh", "typeRangeLow", "typeRangeHigh")
+                      "(?<syntaxJunk>.*?)" SPACE "+"
+                    "((?<accessType>MAX|MIN)-)?ACCESS" SPACE "+"
+                      "(?<access>read-only|read-write|write-only|not-accessible|(?<accessJunk>.*?))" SPACE "+"
+                      ".*?"
+                    "STATUS" SPACE "+"
+                      "(?<status>mandatory|optional|obsolete|(?<statusJunk>.*?))" SPACE "+"
+                      ".*?"
+                    "DESCRIPTION" SPACE "+"
+                      "(\"(?<descr>[^\"]*)\")"
+                      ".*?"
+                ")"
+              ")" SPACE "+"
+            ")?"
             "::=" SPACE "*"
               "(?<typeDescr>"
                 BUILD_TYPE_REGEX("visibility", "tag", "implexpl", "parTypeSeqOf", "parType", "parTypeSizeLow", "parTypeSizeHigh", "parTypeRangeLow", "parTypeRangeHigh")
@@ -835,22 +934,26 @@ struct mibtree *import_file(char *filename)
     return mib;
 }
 
-static struct oid *find_oid_by_value_destructively(char *string, struct oid *root)
+static struct oid *find_oid_by_value_destructively(char *string, struct oid *root, char **errorptr)
 {
     char *dot = strchr(string, '.');
+    unsigned long long number;
+    if (parse_num(string, &number, errorptr) < 0) {
+        return NULL;
+    }
     if (! dot) {
-        if (root->value == atoi(string)) {
+        if (root->value == (int)number) {
             return root;
         }
     } else {
         *dot = '\0';
-        if (root->value != atoi(string)) {
+        if (root->value != (int)number) {
             return NULL;
         }
         struct oid *oid;
         struct oid **oidptr;
         dllist_foreach(oidptr, root->children) {
-            oid = find_oid_by_value(dot + 1, *oidptr);
+            oid = find_oid_by_value(dot + 1, *oidptr, errorptr);
             if (oid) {
                 return oid;
             }
@@ -859,10 +962,10 @@ static struct oid *find_oid_by_value_destructively(char *string, struct oid *roo
     return NULL;
 }
 
-struct oid *find_oid_by_value(char *string, struct oid *root)
+struct oid *find_oid_by_value(char *string, struct oid *root, char **errorptr)
 {
     char *copy = xstrdup(string);
-    struct oid *result = find_oid_by_value_destructively(copy, root);
+    struct oid *result = find_oid_by_value_destructively(copy, root, errorptr);
     free(copy);
     return result;
 }

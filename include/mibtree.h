@@ -6,7 +6,7 @@
     "OCTET" SPACE "+STRING|" \
     "OBJECT" SPACE "+IDENTIFIER|" \
     "[a-zA-Z_][a-zA-Z0-9_-]*"
-    
+
 #define BUILD_TYPE_REGEX(GROUP_visibility, GROUP_tag, GROUP_implexpl, GROUP_seq_of, GROUP_type, GROUP_size_low, GROUP_size_high, GROUP_range_low, GROUP_range_high) \
     "(" \
      "(" \
@@ -24,12 +24,12 @@
        SPACE "*" \
        "(" \
         "(\\(" SPACE "*" "SIZE" SPACE "*" \
-            "\\(" SPACE "*(?<" GROUP_size_low ">[0-9]+)" SPACE "*" \
-              "(\\.\\." SPACE "*" "(?<" GROUP_size_high ">[0-9]+)" SPACE "*)?\\)" \
+            "\\(" SPACE "*(?<" GROUP_size_low ">[+-]?[0-9]+)" SPACE "*" \
+              "(\\.\\." SPACE "*" "(?<" GROUP_size_high ">[+-]?[0-9]+)" SPACE "*)?\\)" \
           SPACE "*\\))|" \
         "(" \
-            "\\(" SPACE "*(?<" GROUP_range_low ">[0-9]+)" SPACE "*" \
-              "(\\.\\." SPACE "*(?<" GROUP_range_high ">[0-9]+)" SPACE "*)?\\)" \
+            "\\(" SPACE "*(?<" GROUP_range_low ">[+-]?[0-9]+)" SPACE "*" \
+              "(\\.\\." SPACE "*(?<" GROUP_range_high ">[+-]?[0-9]+)" SPACE "*)?\\)" \
         ")" \
        ")" \
       ")?" \
@@ -46,6 +46,13 @@ enum mib_base_type {
     MIB_TYPE_SEQUENCE_OF
 };
 
+#define IS_PRIMITIVE(type) (                                \
+            type->base_type == MIB_TYPE_NULL ||              \
+            type->base_type == MIB_TYPE_INTEGER ||           \
+            type->base_type == MIB_TYPE_OBJECT_IDENTIFIER || \
+            type->base_type == MIB_TYPE_OCTET_STRING         \
+        )
+
 /* enum access { */
 /*     ACCESS_NOT_ACCESSIBLE, */
 /*     ACCESS_READ_ONLY, */
@@ -53,16 +60,24 @@ enum mib_base_type {
 /*     ACCESS_READ_WRITE */
 /* }; */
 
+struct number {
+    union {
+        long long s;
+        unsigned long long u;
+    } value;
+    int is_signed;
+};
+
 struct range {
-    char *low;
-    char *high;
+    struct number *low;
+    struct number *high;
 };
 
 struct object_type_syntax {
     char *name;
     struct object_type_syntax *parent;
     char visibility;
-    int tag;
+    unsigned long long tag;
     char is_explicit;
     enum mib_base_type base_type;
     union {
@@ -122,6 +137,6 @@ extern void print_types(struct dllist *types);
 extern void print_type(struct object_type_syntax *type);
 extern char *oid_to_string(struct oid *oid);
 extern struct oid *find_oid(char *oid_name, struct oid *root);
-extern struct oid *find_oid_by_value(char *string, struct oid *root);
+extern struct oid *find_oid_by_value(char *string, struct oid *root, char **errorptr);
 
 #endif

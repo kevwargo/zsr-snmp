@@ -6,9 +6,13 @@
 
 
 struct oid_type_data {
-    unsigned long long length;
-    unsigned char *buffer;
-    struct dllist *components;
+    struct object_type_syntax *syntax;
+    unsigned char *tagbuf;
+    unsigned int taglen;
+    unsigned char *lenbuf;
+    unsigned int lenlen;
+    unsigned char *databuf;
+    unsigned long long datalen;
 };
 
 

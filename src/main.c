@@ -5,6 +5,7 @@
 #include "imports.h"
 #include "mibtree.h"
 #include "utils.h"
+#include "ber.h"
 #include "json-c/json.h"
 #include "json-c/json_tokener.h"
 
@@ -98,7 +99,7 @@ static void __attribute__((__unused__)) test_re(char *regex, char *subject, int 
     putchar('\n');
 }
 
-static void __attribute__((__unused__)) test_import(char *filename, char *name)
+static void __attribute__((__unused__)) test_import(char *filename, char *datalen)
 {
     struct mibtree *mib = import_file(filename);
     if (! mib) {
@@ -107,18 +108,26 @@ static void __attribute__((__unused__)) test_import(char *filename, char *name)
     }
     /* print_oidtree(mib->root_oid); */
     /* print_types(mib->types); */
-    struct oid *oid = find_oid(name, mib->root_oid);
-
-    if (oid) {
-        char *s = oid_to_string(oid);
-        printf("Found OID %s: %s\n", name, s);
-        if (oid->type) {
-            print_type(oid->type->syntax);
-        }
-        free(s);
-    } else {
-        printf("OID with name %s not found\n", name);
+    
+    /* struct oid *oid = find_oid(oid_name, mib->root_oid); */
+    struct oid_type_data data;
+    memset(&data, 0, sizeof(struct oid_type_data));
+    data.datalen = atoi(datalen);
+    encode_length(&data);
+    for (int i = 0; i < data.lenlen; i++) {
+        printf("%02x\n", data.lenbuf[i]);
     }
+
+    /* if (oid) { */
+    /*     char *s = oid_to_string(oid); */
+    /*     printf("Found OID %s: %s\n", name, s); */
+    /*     if (oid->type) { */
+    /*         print_type(oid->type->syntax); */
+    /*     } */
+    /*     free(s); */
+    /* } else { */
+    /*     printf("OID with name %s not found\n", name); */
+    /* } */
 }
 
 static void __attribute__((__unused__)) test_mibtree(char *filename, char *name)
@@ -151,20 +160,22 @@ int main(int argc, char **argv)
     /* printf("%d\n", capture_count(argv[1])); */
     /* test_re(argv[1], argv[2], atoi(argv[3])); */
     /* test_regex(argv[1]); */
-    test_import(argv[1], argv[2]);
+    /* test_import(argv[1], argv[2]); */
     /* print_imports(argv[1]); */
     /* puts(remove_comments(read_file(argv[1]))); */
     /* test_mibtree(argv[1], argv[2]); */
-    /* struct json_object *obj = json_tokener_parse(argv[1]); */
-    /* if (!obj) { */
-    /*     return 1; */
-    /* } */
-    /* printf("%s\n", json_object_to_json_string(obj)); */
-    /* array_list *list = json_object_get_array(obj); */
-    /* int len = array_list_length(list); */
-    /* for (int i = 0; i < len; i++) { */
-    /*     json_object *component_obj = array_list_get_idx(list, i); */
-    /*     printf(" %s\n", json_object_to_json_string(component_obj)); */
-    /* } */
+    struct json_object *obj = json_tokener_parse(argv[1]);
+    if (!obj) {
+        return 1;
+    }
+    char *error;
+    struct oid_type_data *data = encode_octet_string(NULL, obj, &error);
+    if (! data) {
+        fprintf(stderr, "%s\n", error);
+        return 1;
+    }
+    for (int i = 0; i < data->datalen; i++) {
+        printf("%02x\n", data->databuf[i]);
+    }
     return 0;
 }
