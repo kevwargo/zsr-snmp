@@ -59,3 +59,6 @@ demo/
 parse
 mibs/
 preprocessed/
+
+.dir-locals.el
+.dir-locals.el.*
