@@ -411,21 +411,6 @@ static int handle_oids_init(struct token *token, int *stateptr, void *data, char
     return 0;
 }
 
-struct oid *find_oid(char *oid_name, struct oid *root)
-{
-    if (strcmp(root->name, oid_name) == 0) {
-        return root;
-    }
-    struct oid **oidptr;
-    dllist_foreach(oidptr, root->children) {
-        struct oid *oid = find_oid(oid_name, *oidptr);
-        if (oid) {
-            return oid;
-        }
-    }
-    return NULL;
-}
-
 static int process_oid(char *oid, struct mib_parser_data *mpd, char **errorptr)
 {
     if (mpd->current_oid) {
@@ -433,7 +418,7 @@ static int process_oid(char *oid, struct mib_parser_data *mpd, char **errorptr)
         *errorptr = mib_error_buf;
         return REGEX_PARSE_ERROR;
     }
-    mpd->current_oid = find_oid(oid, mpd->mib->root_oid);
+    mpd->current_oid = find_oid_by_name(oid, mpd->mib->root_oid);
     if (! mpd->current_oid) {
         mpd->missing_symbol = oid;
         return REGEX_PARSE_SYMBOL_NOT_FOUND_ERROR;
@@ -468,7 +453,7 @@ char *oid_to_string(struct oid *oid)
 
 static int set_oid(char *name, char *value, struct oid **parentptr, struct oid *root, char **errorptr)
 {
-    struct oid *oid = find_oid(name, root);
+    struct oid *oid = find_oid_by_name(name, root);
     if (oid) {
         char *s = oid_to_string(oid);
         printf("WARNING: OID `%s' (%s) already exists\n", name, s);
@@ -967,5 +952,40 @@ struct oid *find_oid_by_value(char *string, struct oid *root, char **errorptr)
     char *copy = xstrdup(string);
     struct oid *result = find_oid_by_value_destructively(copy, root, errorptr);
     free(copy);
+    return result;
+}
+
+struct oid *find_oid_by_name(char *oid_name, struct oid *root)
+{
+    if (strcmp(root->name, oid_name) == 0) {
+        return root;
+    }
+    struct oid **oidptr;
+    dllist_foreach(oidptr, root->children) {
+        struct oid *oid = find_oid_by_name(oid_name, *oidptr);
+        if (oid) {
+            return oid;
+        }
+    }
+    return NULL;
+}
+
+struct oid *find_oid(char *oid, struct oid *root, char **errorptr)
+{
+    struct regex *re = regex_prepare("^[0-9]+(\\.[0-9]+)*$", errorptr);
+    if (! re) {
+        return NULL;
+    }
+    struct oid *result;
+    if (regex_match(re, oid, strlen(oid), 0, 0, errorptr) < 0) {
+        result = find_oid_by_name(oid, root);
+        if (! result) {
+            snprintf(mib_error_buf, MIB_ERROR_BUFSIZE, "OID with name %s was not found", oid);
+            *errorptr = mib_error_buf;
+        }
+    } else {
+        result = find_oid_by_value(oid, root, errorptr);
+    }
+    regex_free(re);
     return result;
 }
