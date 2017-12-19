@@ -139,5 +139,6 @@ extern char *oid_to_string(struct oid *oid);
 extern struct oid *find_oid_by_name(char *oid_name, struct oid *root);
 extern struct oid *find_oid_by_value(char *string, struct oid *root, char **errorptr);
 extern struct oid *find_oid(char *string, struct oid *root, char **errorptr);
+extern char *strrange(struct range *range);
 
 #endif

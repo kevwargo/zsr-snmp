@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <json-c/json.h>
 #include "dllist.h"
 #include "mibtree.h"
@@ -33,16 +34,16 @@ static struct oid_type_data *encode_tag(struct oid_type_data *data);
 struct oid_type_data *encode_length(struct oid_type_data *data);
 
 static struct oid_type_data *encode_null(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
-struct oid_type_data *encode_integer(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
+struct oid_type_data *encode_integer(struct object_type_syntax *syntax, json_object *obj, struct object_type_syntax *orig_syntax, char **errorptr);
 struct oid_type_data *encode_obj_id(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
-struct oid_type_data *encode_octet_string(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
+struct oid_type_data *encode_octet_string(struct object_type_syntax *syntax, json_object *obj, struct object_type_syntax *orig_syntax, char **errorptr);
 
 struct dllist *encode_choice(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
 struct dllist *encode_sequence(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
 struct dllist *encode_seq_of(struct object_type_syntax *syntax, json_object *obj, char **errorptr);
 
 
-static struct oid_type_data *encode_oid_type(struct object_type_syntax *syntax, json_object *obj, char **errorptr)
+static struct oid_type_data *encode_oid_type(struct object_type_syntax *syntax, json_object *obj, struct object_type_syntax *orig_syntax, char **errorptr)
 {
     struct oid_type_data *data = NULL;
 
@@ -52,16 +53,19 @@ static struct oid_type_data *encode_oid_type(struct object_type_syntax *syntax, 
                 data = encode_null(syntax, obj, errorptr);
                 break;
             case MIB_TYPE_INTEGER:
-                data = encode_integer(syntax, obj, errorptr);
+                data = encode_integer(syntax, obj, orig_syntax, errorptr);
                 break;
             case MIB_TYPE_OBJECT_IDENTIFIER:
                 data = encode_obj_id(syntax, obj, errorptr);
                 break;
             case MIB_TYPE_OCTET_STRING:
-                data = encode_octet_string(syntax, obj, errorptr);
+                data = encode_octet_string(syntax, obj, orig_syntax, errorptr);
                 break;
             default:
                 BER_THROW_ERROR(NULL, "Type %s (%d) is incomplete", syntax->name, syntax->base_type);
+        }
+        if (! data) {
+            return NULL;
         }
         data->syntax = syntax;
         return encode_tag(encode_length(data));
@@ -90,7 +94,7 @@ static struct oid_type_data *encode_oid_type(struct object_type_syntax *syntax, 
             return NULL;
         }
     } else {
-        component = encode_oid_type(syntax->parent, obj, errorptr);
+        component = encode_oid_type(syntax->parent, obj, orig_syntax ? orig_syntax : syntax, errorptr);
         if (! component) {
             return NULL;
         }
@@ -198,12 +202,41 @@ static struct oid_type_data *encode_null(struct object_type_syntax *syntax, json
     return data;
 }
 
-struct oid_type_data *encode_integer(struct object_type_syntax *syntax, json_object *obj, char **errorptr)
+static int number_cmp(struct number *num1, long long num2)
+{
+    if (num1->is_signed) {
+        return num1->value.s > num2 ? 1 : num1->value.s < num2 ? -1 : 0;
+    } else {
+        return num1->value.u > num2 ? 1 : num1->value.u < num2 ? -1 : 0;
+    }
+}
+
+static int check_boundaries(struct object_type_syntax *syntax, long long value, char **errorptr)
+{
+    if (syntax->u.range && syntax->u.range->low) {
+        if (syntax->u.range->high) {
+            if (number_cmp(syntax->u.range->low, value) < 0 ||
+                    number_cmp(syntax->u.range->high, value) > 0) {
+                BER_THROW_ERROR(0, "Value %lld is out of range (%s)", value, strrange(syntax->u.range));
+            }
+        } else {
+            if (number_cmp(syntax->u.range->low, value) != 0) {
+                BER_THROW_ERROR(0, "Value %lld is not equal %s", value, strrange(syntax->u.range));
+            }
+        }
+    }
+    return 1;
+}
+
+struct oid_type_data *encode_integer(struct object_type_syntax *syntax, json_object *obj, struct object_type_syntax *orig_syntax, char **errorptr)
 {
     if (! json_object_is_type(obj, json_type_int)) {
         BER_THROW_ERROR(NULL, "JSON for type %s must be an integer, not %s", syntax->name, json_object_to_json_string(obj));
     }
     long long value = json_object_get_int64(obj);
+    if (! check_boundaries(orig_syntax, value, errorptr)) {
+        return NULL;
+    }
     long long v = value;
     struct oid_type_data *data = (struct oid_type_data *)xmalloc(sizeof(struct oid_type_data));
     memset(data, 0, sizeof(struct oid_type_data));
@@ -313,16 +346,25 @@ struct oid_type_data *encode_obj_id(struct object_type_syntax *syntax, json_obje
     return data;
 }
 
-struct oid_type_data *encode_octet_string(struct object_type_syntax *syntax, json_object *obj, char **errorptr)
+struct oid_type_data *encode_octet_string(struct object_type_syntax *syntax, json_object *obj, struct object_type_syntax *orig_syntax, char **errorptr)
 {
     const char *string = json_object_get_string(obj);
     struct oid_type_data *data = (struct oid_type_data *)xmalloc(sizeof(struct oid_type_data));
     memset(data, 0, sizeof(struct oid_type_data));
     if (json_object_is_type(obj, json_type_string)) {
+        int len = strlen((char *)string);
+        if (! check_boundaries(orig_syntax, len, errorptr)) {
+            free(data);
+            return NULL;
+        }
         data->databuf = (unsigned char *)xstrdup((char *)string);
         data->datalen = strlen((char *)string);
     } else if (json_object_is_type(obj, json_type_array)) {
         int len = json_object_array_length(obj);
+        if (! check_boundaries(orig_syntax, len, errorptr)) {
+            free(data);
+            return NULL;
+        }
         data->datalen = len;
         data->databuf = (unsigned char *)xmalloc(len);
         for (int i = 0; i < len; i++) {
@@ -356,7 +398,7 @@ struct dllist *encode_choice(struct object_type_syntax *syntax, json_object *obj
         struct object_type_syntax **itemptr;
         dllist_foreach(itemptr, syntax->u.components) {
             if (strcmp((*itemptr)->name, key) == 0) {
-                struct oid_type_data *data = encode_oid_type(*itemptr, value, errorptr);
+                struct oid_type_data *data = encode_oid_type(*itemptr, value, NULL, errorptr);
                 if (! data) {
                     return NULL;
                 }
@@ -383,7 +425,7 @@ struct dllist *encode_sequence(struct object_type_syntax *syntax, json_object *o
             dllist_destroy(result);
             BER_THROW_ERROR(NULL, "Key %s must be set in JSON for type %s", (*itemptr)->name, syntax->name);
         }
-        struct oid_type_data *data = encode_oid_type(*itemptr, component, errorptr);
+        struct oid_type_data *data = encode_oid_type(*itemptr, component, NULL, errorptr);
         if (! data) {
             return NULL;
         }
@@ -401,7 +443,7 @@ struct dllist *encode_seq_of(struct object_type_syntax *syntax, json_object *obj
     int len = json_object_array_length(obj);
     for (int i = 0; i < len; i++) {
         json_object *component = json_object_array_get_idx(obj, i);
-        struct oid_type_data *data = encode_oid_type(syntax->u.seq_type, component, errorptr);
+        struct oid_type_data *data = encode_oid_type(syntax->u.seq_type, component, NULL, errorptr);
         if (! data) {
             dllist_destroy(result);
             return NULL;
@@ -416,11 +458,15 @@ ssize_t ber_encode(struct oid *oid, char *value, unsigned char **bufptr, char **
     if (! oid->type) {
         BER_THROW_ERROR(-1, "Given OID does not have a type");
     }
+    errno = 0;
     json_object *obj = json_tokener_parse(value);
+    if (errno) {
+        fprintf(stderr, "JSON parse warning: %s\n", strerror(errno));
+    }
     if (! obj) {
         BER_THROW_ERROR(-1, "JSON parse error");
     }
-    struct oid_type_data *data = encode_oid_type(oid->type->syntax, obj, errorptr);
+    struct oid_type_data *data = encode_oid_type(oid->type->syntax, obj, NULL, errorptr);
     if (! data) {
         return -1;
     }

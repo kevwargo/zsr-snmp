@@ -579,7 +579,7 @@ static char *strnumber(struct number *number) {
     return result;
 }
 
-static char *strrange(struct range *range)
+char *strrange(struct range *range)
 {
     static char result[64];
     char *num = strnumber(range->low);
