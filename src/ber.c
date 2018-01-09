@@ -213,15 +213,21 @@ static int number_cmp(struct number *num1, long long num2)
 
 static int check_boundaries(struct object_type_syntax *syntax, long long value, char **errorptr)
 {
+    char *name;
+    struct object_type_syntax *t = syntax;
+    while (! t->name) {
+        t = t->parent;
+    }
+    name = t->name;
     if (syntax->u.range && syntax->u.range->low) {
         if (syntax->u.range->high) {
-            if (number_cmp(syntax->u.range->low, value) < 0 ||
-                    number_cmp(syntax->u.range->high, value) > 0) {
-                BER_THROW_ERROR(0, "Value %lld is out of range (%s)", value, strrange(syntax->u.range));
+            if (number_cmp(syntax->u.range->low, value) > 0 ||
+                    number_cmp(syntax->u.range->high, value) < 0) {
+                BER_THROW_ERROR(0, "Value %lld for type %s is out of range (%s)", value, name, strrange(syntax->u.range));
             }
         } else {
             if (number_cmp(syntax->u.range->low, value) != 0) {
-                BER_THROW_ERROR(0, "Value %lld is not equal %s", value, strrange(syntax->u.range));
+                BER_THROW_ERROR(0, "Size of type %s value must be %s, not %lld", name, strrange(syntax->u.range), value);
             }
         }
     }
